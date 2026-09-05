@@ -1,0 +1,310 @@
+@import './styles/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink-2 font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-ink font-semibold tracking-[-0.015em];
+  }
+
+  ::selection {
+    background: rgb(var(--cf-brand) / 0.18);
+  }
+
+  /* Аккуратные скроллбары */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--cf-ink-3) / 0.28);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--cf-ink-3) / 0.45);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+
+  [contenteditable]:focus {
+    outline: none;
+  }
+}
+
+@layer components {
+  /* ---- Базовые примитивы ------------------------------------------------ */
+
+  .cf-card {
+    @apply bg-surface border border-line rounded-card shadow-card;
+  }
+
+  /* Крупная панель-«остров» — как секции лендинга */
+  .cf-panel {
+    @apply bg-surface border border-line shadow-card;
+    border-radius: 24px;
+  }
+
+  .cf-pill {
+    @apply inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-1 text-[12px] font-medium leading-none;
+  }
+
+  .cf-input {
+    @apply w-full rounded-pill border border-line bg-surface px-4 py-2.5 text-[14px] text-ink
+           placeholder:text-ink-3 transition duration-200
+           focus:border-brand focus:ring-4 focus:ring-brand/10 focus:outline-none;
+  }
+
+  /* Многострочные поля и select остаются со скруглением поменьше */
+  textarea.cf-input,
+  select.cf-input {
+    @apply rounded-soft;
+  }
+
+  .cf-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-pill px-5 py-2.5 text-[14px]
+           font-semibold transition duration-200 ease-out active:scale-[.97]
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  /* Основное действие — синий лендинга */
+  .cf-btn-brand {
+    @apply cf-btn bg-brand text-white;
+    box-shadow: 0 8px 20px -10px rgb(var(--cf-brand) / 0.9);
+  }
+  .cf-btn-brand:hover {
+    filter: brightness(1.08);
+    box-shadow: 0 12px 26px -10px rgb(var(--cf-brand) / 0.95);
+  }
+
+  /* Белая круглая кнопка — базовый элемент интерфейса */
+  .cf-btn-primary,
+  .cf-btn-ghost {
+    @apply cf-btn border border-line bg-surface text-ink;
+    box-shadow: 0 1px 2px rgb(16 24 40 / 0.04), 0 6px 16px -12px rgb(16 24 40 / 0.3);
+  }
+  .cf-btn-primary:hover,
+  .cf-btn-ghost:hover {
+    @apply bg-surface;
+    border-color: rgb(var(--cf-brand) / 0.35);
+    box-shadow: 0 2px 4px rgb(16 24 40 / 0.05), 0 10px 22px -12px rgb(16 24 40 / 0.35);
+    transform: translateY(-1px);
+  }
+
+  /* Круглая иконочная кнопка */
+  .cf-icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-full border border-line
+           bg-surface text-ink-2 transition duration-200 ease-out active:scale-95;
+    box-shadow: 0 1px 2px rgb(16 24 40 / 0.04);
+  }
+  .cf-icon-btn:hover {
+    @apply text-ink;
+    border-color: rgb(var(--cf-brand) / 0.35);
+    box-shadow: 0 2px 8px -4px rgb(16 24 40 / 0.25);
+  }
+
+  /* Скелетон загрузки вместо спиннера */
+  .cf-skeleton {
+    @apply relative overflow-hidden rounded-soft bg-surface-2;
+  }
+  .cf-skeleton::after {
+    content: '';
+    @apply absolute inset-0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--cf-surface) / 0.75),
+      transparent
+    );
+    animation: shimmer 1.4s infinite;
+  }
+
+  /* Приподнимание карточки на hover */
+  .cf-hoverable {
+    @apply will-change-transform;
+    transition:
+      transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .cf-hoverable:hover {
+    @apply -translate-y-1 shadow-lift;
+  }
+
+  /* Контент rich-text редактора и просмотра конспектов */
+  .cf-prose {
+    @apply text-[15px] leading-[1.75] text-ink-2;
+  }
+  .cf-prose h1 {
+    @apply mb-2 mt-5 text-[26px] font-bold text-ink;
+  }
+  .cf-prose h2 {
+    @apply mb-2 mt-5 text-[20px] font-semibold text-ink;
+  }
+  .cf-prose h3 {
+    @apply mb-1.5 mt-4 text-[17px] font-semibold text-ink;
+  }
+  .cf-prose p {
+    @apply my-2;
+  }
+  .cf-prose ul {
+    @apply my-2 list-disc pl-6;
+  }
+  .cf-prose ol {
+    @apply my-2 list-decimal pl-6;
+  }
+  .cf-prose li {
+    @apply my-1;
+  }
+  .cf-prose a {
+    @apply text-brand underline underline-offset-2;
+  }
+  .cf-prose b,
+  .cf-prose strong {
+    @apply font-semibold text-ink;
+  }
+  .cf-prose mark {
+    @apply rounded bg-[color:var(--cf-yellow-bg)] px-1 text-ink;
+  }
+  .cf-prose blockquote {
+    @apply my-3 border-l-4 border-line pl-4 italic;
+  }
+  .cf-prose code {
+    @apply rounded bg-surface-2 px-1.5 py-0.5 text-[13px];
+  }
+  /* Чек-лист внутри конспекта */
+  .cf-prose ul[data-checklist] {
+    @apply list-none pl-0;
+  }
+  .cf-prose ul[data-checklist] > li {
+    @apply flex items-start gap-2;
+  }
+  .cf-prose ul[data-checklist] > li::before {
+    content: '';
+    @apply mt-[5px] h-[15px] w-[15px] shrink-0 rounded-[5px] border-2 border-line;
+  }
+  .cf-prose ul[data-checklist] > li[data-done='true'] {
+    @apply text-ink-3 line-through;
+  }
+  .cf-prose ul[data-checklist] > li[data-done='true']::before {
+    background: rgb(var(--cf-brand));
+    border-color: rgb(var(--cf-brand));
+  }
+  .cf-editor:empty::before {
+    content: attr(data-placeholder);
+    @apply text-ink-3;
+  }
+}
+
+@layer utilities {
+  /* Плавное переключение темы: класс висит на <html> доли секунды */
+  html.cf-theme-switching,
+  html.cf-theme-switching * {
+    transition:
+      background-color 0.28s ease,
+      border-color 0.28s ease,
+      color 0.28s ease,
+      fill 0.28s ease,
+      box-shadow 0.28s ease !important;
+  }
+
+  /* Поочерёдное появление элементов списка */
+  .cf-stagger > * {
+    animation: fade-up 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .cf-stagger > *:nth-child(1) { animation-delay: 0.02s; }
+  .cf-stagger > *:nth-child(2) { animation-delay: 0.06s; }
+  .cf-stagger > *:nth-child(3) { animation-delay: 0.1s; }
+  .cf-stagger > *:nth-child(4) { animation-delay: 0.14s; }
+  .cf-stagger > *:nth-child(5) { animation-delay: 0.18s; }
+  .cf-stagger > *:nth-child(6) { animation-delay: 0.22s; }
+  .cf-stagger > *:nth-child(7) { animation-delay: 0.26s; }
+  .cf-stagger > *:nth-child(8) { animation-delay: 0.3s; }
+  .cf-stagger > *:nth-child(n + 9) { animation-delay: 0.34s; }
+
+  /* Мягкий подъём при наведении — для карточек и строк списка */
+  .cf-lift {
+    @apply transition-[transform,box-shadow,border-color] duration-300 ease-out;
+  }
+  .cf-lift:hover {
+    transform: translateY(-2px);
+    @apply shadow-lift;
+  }
+  .cf-lift:active {
+    transform: translateY(0) scale(0.995);
+  }
+
+  /* Нажатие на строку/пункт меню */
+  .cf-press {
+    @apply transition duration-200 ease-out active:scale-[0.98];
+  }
+
+  .cf-no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .cf-no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  /* Мягкий коллажный фон дашборда */
+  .cf-collage {
+    background-image:
+      radial-gradient(46rem 26rem at 8% -6%, rgb(var(--cf-brand) / 0.1), transparent 60%),
+      radial-gradient(34rem 22rem at 98% 4%, color-mix(in srgb, var(--cf-purple-acc) 14%, transparent), transparent 60%),
+      radial-gradient(30rem 20rem at 62% 108%, color-mix(in srgb, var(--cf-green-acc) 12%, transparent), transparent 62%);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cf-hoverable,
+    .cf-lift,
+    .cf-press,
+    .cf-stagger > *,
+    .animate-fade-up,
+    .animate-scale-in,
+    .animate-fade-in,
+    .animate-page,
+    .animate-pop,
+    .animate-toast-in,
+    .animate-slide-left,
+    .animate-slide-right,
+    .animate-check-pop,
+    .animate-pulse-soft {
+      animation: none !important;
+      transition: none !important;
+    }
+    html.cf-theme-switching,
+    html.cf-theme-switching * {
+      transition: none !important;
+    }
+  }
+}

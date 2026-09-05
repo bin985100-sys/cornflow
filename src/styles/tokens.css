@@ -1,0 +1,103 @@
+/* =========================================================================
+   CornFlow — дизайн-токены.
+   Все значения — в формате «R G B» без запятых, чтобы Tailwind мог
+   подмешивать прозрачность через <alpha-value>.
+   Тёмная тема переопределяет только этот файл.
+   ========================================================================= */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* Поверхности — та же гамма, что на лендинге */
+  --cf-shell: 234 234 231; /* фон вокруг «островов» интерфейса */
+  --cf-canvas: 246 246 244; /* рабочая область */
+  --cf-surface: 255 255 255; /* панели и карточки */
+  --cf-surface-2: 244 244 241; /* ховеры и приглушённые блоки */
+  --cf-line: 233 233 228; /* тонкие бордеры */
+
+  /* Текст */
+  --cf-ink: 11 12 16; /* #0B0C10 — как на лендинге */
+  --cf-ink-2: 82 84 92;
+  --cf-ink-3: 138 140 148;
+
+  /* Бренд — синий лендинга */
+  --cf-brand: 35 86 253; /* #2356FD */
+  --cf-brand-soft: 233 239 255; /* #E9EFFF */
+
+  /* --- Палитра карточек материалов ------------------------------------- */
+  --cf-red-bg: #fdecec;
+  --cf-red-acc: #e5484d;
+  --cf-yellow-bg: #fef9e7;
+  --cf-yellow-acc: #e5a83d;
+  --cf-green-bg: #eaf6ee;
+  --cf-green-acc: #3a9e5d;
+  --cf-blue-bg: #e9efff;
+  --cf-blue-acc: #2356fd;
+  --cf-purple-bg: #f1ecfd;
+  --cf-purple-acc: #7b5ee5;
+
+  /* --- Палитра тегов-пилюль -------------------------------------------- */
+  --cf-tag-blue-bg: #e7f0ff;
+  --cf-tag-blue-fg: #2356fd;
+  --cf-tag-green-bg: #e6f4ec;
+  --cf-tag-green-fg: #1f9d57;
+  --cf-tag-purple-bg: #f0eafe;
+  --cf-tag-purple-fg: #7c3aed;
+  --cf-tag-orange-bg: #feefe0;
+  --cf-tag-orange-fg: #ea7b1b;
+  --cf-tag-navy-bg: #e8ecfb;
+  --cf-tag-navy-fg: #2a3b8f;
+  --cf-tag-teal-bg: #e4f6f8;
+  --cf-tag-teal-fg: #1aa5b7;
+  --cf-tag-red-bg: #fdecec;
+  --cf-tag-red-fg: #e5484d;
+
+  --cf-radius-card: 22px;
+  --cf-radius-soft: 16px;
+}
+
+/* Тёмная тема — структура токенов заложена, включается data-theme="dark".
+   Тонированные фоны карточек/тегов затемняются, акценты остаются узнаваемыми. */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --cf-shell: 12 12 14;
+  --cf-canvas: 20 20 23;
+  --cf-surface: 28 28 32;
+  --cf-surface-2: 33 33 37;
+  --cf-line: 48 48 53;
+
+  --cf-ink: 240 240 238;
+  --cf-ink-2: 186 186 181;
+  --cf-ink-3: 135 135 130;
+
+  --cf-brand: 122 162 255;
+  --cf-brand-soft: 26 38 78;
+
+  --cf-red-bg: #35211f;
+  --cf-red-acc: #ff6b6f;
+  --cf-yellow-bg: #332a17;
+  --cf-yellow-acc: #f0bc5c;
+  --cf-green-bg: #1b2f23;
+  --cf-green-acc: #56bd7a;
+  --cf-blue-bg: #1b2545;
+  --cf-blue-acc: #7aa2ff;
+  --cf-purple-bg: #262040;
+  --cf-purple-acc: #a08bf0;
+
+  --cf-tag-blue-bg: #1b2743;
+  --cf-tag-blue-fg: #7ea6f5;
+  --cf-tag-green-bg: #16301f;
+  --cf-tag-green-fg: #56bd7a;
+  --cf-tag-purple-bg: #251f3f;
+  --cf-tag-purple-fg: #a58af5;
+  --cf-tag-orange-bg: #35261a;
+  --cf-tag-orange-fg: #f0a05a;
+  --cf-tag-navy-bg: #1d2140;
+  --cf-tag-navy-fg: #8b9bef;
+  --cf-tag-teal-bg: #142e33;
+  --cf-tag-teal-fg: #57c6d4;
+  --cf-tag-red-bg: #35211f;
+  --cf-tag-red-fg: #ff6b6f;
+}
