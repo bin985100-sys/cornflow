@@ -141,7 +141,7 @@ export function Sidebar() {
                 {space?.name ?? 'Нет пространств'}
               </span>
               <span className="block truncate text-[11.5px] text-ink-3">
-                {space ? `${spaceRoleLabel} · ${space.members.length} участник(ов)` : 'создайте первое'}
+                {space ? `${space.members.length} участник(ов)` : 'создайте первое'}
               </span>
             </span>
             <ChevronDown size={15} className={cx('shrink-0 text-ink-3 transition', spaceMenu && 'rotate-180')} />
@@ -318,8 +318,8 @@ export function Sidebar() {
                 <Avatar name={user?.name ?? '?'} src={user?.avatar} size={32} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-semibold text-ink">{user?.name}</span>
-                  <span className="block text-[11.5px] text-ink-3">
-                    {isTeacher ? 'Учитель' : 'Ученик'}
+                  <span className="block truncate text-[11.5px] text-ink-3">
+                    {space ? spaceRoleLabel : isTeacher ? 'Учитель' : 'Ученик'}
                   </span>
                 </span>
                 <Settings size={15} className="shrink-0 text-ink-3" />
