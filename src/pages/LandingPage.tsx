@@ -21,7 +21,6 @@ import {
   PlayCircle,
   Search,
   ShieldCheck,
-  Sparkles,
   Star,
   Tag as TagIcon,
   Users,
@@ -182,15 +181,8 @@ export function LandingPage() {
         />
 
         <div className="relative mx-auto w-full max-w-[1240px] px-5 pb-24 pt-32 lg:px-8">
-          <Reveal>
-            <span className="inline-flex items-start gap-2 rounded-full border border-white/20 bg-white/[0.07] px-3.5 py-1.5 text-[11.5px] font-medium leading-snug text-white/90 backdrop-blur sm:items-center sm:text-[12.5px]">
-              <Sparkles size={13} className="mt-[2px] shrink-0 text-[#7AA2FF] sm:mt-0" />
-              Учебные материалы, которые наконец-то не теряются
-            </span>
-          </Reveal>
-
           <Reveal delay={90}>
-            <h1 className="mt-6 max-w-[15ch] text-[clamp(2.15rem,7vw,5.4rem)] font-extrabold leading-[1.02] tracking-[-0.04em] text-white">
+            <h1 className="max-w-[15ch] text-[clamp(2.15rem,7vw,5.4rem)] font-extrabold leading-[1.02] tracking-[-0.04em] text-white">
               Всё&nbsp;для&nbsp;учёбы&nbsp;—
               <br />в одном потоке
             </h1>
@@ -551,8 +543,16 @@ export function LandingPage() {
       </section>
 
       {/* ================================ FAQ =============================== */}
-      <section id="faq" className="bg-white py-24 lg:py-32">
-        <div className="mx-auto max-w-[820px] px-5 lg:px-8">
+      <section id="faq" className="relative overflow-hidden bg-white py-24 lg:py-32">
+        <VideoPanel
+          src="/media/faq.mp4"
+          poster="/media/faq-poster.jpg"
+          overlay={{
+            background:
+              'linear-gradient(180deg, rgba(255,255,255,.93) 0%, rgba(255,255,255,.88) 45%, rgba(255,255,255,.95) 100%)',
+          }}
+        />
+        <div className="relative mx-auto max-w-[820px] px-5 lg:px-8">
           <Reveal>
             <p className="text-[13px] font-semibold uppercase tracking-[0.14em]" style={{ color: BLUE }}>
               Вопросы
