@@ -83,6 +83,75 @@ export function detectType(file: { name: string; type?: string }): MaterialType 
   return 'document'
 }
 
+/**
+ * MIME по расширению. Браузеры не всегда проставляют `File.type`
+ * (особенно на Windows и при перетаскивании), а без правильного типа
+ * PDF и офисные файлы не открываются во встроенном просмотрщике.
+ */
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  heic: 'image/heic',
+  bmp: 'image/bmp',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac',
+  txt: 'text/plain;charset=utf-8',
+  md: 'text/plain;charset=utf-8',
+  csv: 'text/csv;charset=utf-8',
+  json: 'application/json',
+  html: 'text/html;charset=utf-8',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  odt: 'application/vnd.oasis.opendocument.text',
+  odp: 'application/vnd.oasis.opendocument.presentation',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  zip: 'application/zip',
+  rar: 'application/vnd.rar',
+  '7z': 'application/x-7z-compressed',
+}
+
+export function mimeByName(name: string, fallback = 'application/octet-stream'): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  return MIME_BY_EXT[ext] ?? fallback
+}
+
+/** Достоверный MIME файла: свой, если браузер его знает, иначе по расширению */
+export function resolveMime(file: { name: string; type?: string }): string {
+  const own = (file.type || '').toLowerCase()
+  if (own && own !== 'application/octet-stream') return own
+  return mimeByName(file.name)
+}
+
+/** Типы, которые браузер умеет показать во встроенном просмотрщике */
+export function isInlineViewable(mime: string): boolean {
+  return (
+    mime.startsWith('image/') ||
+    mime.startsWith('video/') ||
+    mime.startsWith('audio/') ||
+    mime.startsWith('text/') ||
+    mime === 'application/pdf' ||
+    mime === 'application/json'
+  )
+}
+
 export function formatBytes(bytes?: number | null): string {
   if (!bytes && bytes !== 0) return ''
   if (bytes < 1024) return `${bytes} Б`
@@ -257,6 +326,26 @@ export function hostOf(url: string): string {
   } catch {
     return url
   }
+}
+
+/**
+ * Безопасное имя объекта в Storage: только латиница, цифры, точка,
+ * дефис и подчёркивание. Кириллица транслитерируется — иначе часть
+ * прокси и CDN ломают ссылки на файл.
+ */
+const TRANSLIT: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i',
+  й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't',
+  у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '',
+  э: 'e', ю: 'yu', я: 'ya',
+}
+
+export function safeFileKey(name: string): string {
+  const lower = name.trim().toLowerCase()
+  let out = ''
+  for (const ch of lower) out += TRANSLIT[ch] ?? ch
+  out = out.replace(/[^a-z0-9._-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '')
+  return out.slice(0, 96) || 'file'
 }
 
 export function download(url: string, filename: string) {

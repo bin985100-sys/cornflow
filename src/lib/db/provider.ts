@@ -1,8 +1,19 @@
 import type {
   Assignment,
   AssignmentView,
+  Attendance,
+  AttendanceStatus,
   CardColor,
+  CriterionScore,
   Folder,
+  Grade,
+  GradeCategory,
+  GradeCriterion,
+  GradeFlag,
+  GradeItem,
+  GradePeriod,
+  GradeScale,
+  GradebookSnapshot,
   Material,
   MaterialType,
   MaterialView,
@@ -17,14 +28,6 @@ import type {
   TagColor,
   Task,
   User,
-  Comment,
-  CommentView,
-  Quiz,
-  QuizForStudent,
-  QuizOption,
-  QuizQuestion,
-  QuizResult,
-  QuizView,
 } from '../types'
 
 /* ------------------------------- входные DTO ------------------------------ */
@@ -74,7 +77,6 @@ export interface CreateAssignmentInput {
   title: string
   description?: string | null
   due_date?: string | null
-  allow_late?: boolean
   attachments?: string[]
 }
 
@@ -83,6 +85,24 @@ export interface UploadResult {
   file_name: string
   file_size: number
   mime_type: string
+}
+
+export interface CreateGradeItemInput {
+  space_id: string
+  title: string
+  date: string
+  period_id?: string | null
+  category_id?: string | null
+  assignment_id?: string | null
+  max_score?: number
+  weight?: number
+  scale_id?: string | null
+}
+
+export interface GradeInput {
+  score?: number | null
+  flag?: GradeFlag
+  comment?: string | null
 }
 
 /** Событие «что-то изменилось» — для realtime-обновления списков */
@@ -97,9 +117,7 @@ export type ChangeEvent = {
     | 'tags'
     | 'progress'
     | 'starred'
-    | 'comments'
-    | 'quizzes'
-    | 'quiz_attempts'
+    | 'gradebook'
   spaceId?: string | null
 }
 
@@ -114,70 +132,19 @@ export interface DataProvider {
   signIn(input: SignInInput): Promise<User>
   /** redirectTo — абсолютный адрес, куда вернуть пользователя после согласия Google */
   signInWithGoogle?(redirectTo?: string): Promise<void>
-  /** Запомнить роль, выбранную перед уходом на страницу Google */
-  rememberPendingRole?(role: Role): void
-  /** Запомнить, с какой вкладки уходили в Google: вход или регистрация */
-  rememberAuthMode?(mode: 'signin' | 'signup'): void
   signOut(): Promise<void>
-  updateProfile(patch: Partial<Pick<User, 'name' | 'avatar'>>): Promise<User>
-  /** Задать или сменить пароль (недоступно в локальном режиме) */
-  setPassword?(password: string): Promise<void>
-  /** Загрузить фото профиля и получить ссылку на него */
-  uploadAvatar(file: File): Promise<string>
-  /** Сменить роль аккаунта (разрешено, пока нет членства в чужих курсах) */
-  setRole(role: Role): Promise<User>
+  updateProfile(patch: Partial<Pick<User, 'name' | 'avatar' | 'role'>>): Promise<User>
   onAuthChange(cb: (user: User | null) => void): () => void
 
   /* --- пространства --- */
   listSpaces(): Promise<SpaceView[]>
   createSpace(input: CreateSpaceInput): Promise<Space>
-  updateSpace(
-    id: string,
-    patch: Partial<
-      Pick<
-        Space,
-        | 'name'
-        | 'description'
-        | 'color'
-        | 'join_open'
-        | 'is_locked'
-        | 'student_upload'
-        | 'show_assignments'
-        | 'show_calendar'
-        | 'show_members'
-      >
-    >,
-  ): Promise<Space>
+  updateSpace(id: string, patch: Partial<Pick<Space, 'name' | 'description' | 'color'>>): Promise<Space>
   deleteSpace(id: string): Promise<void>
   joinSpaceByCode(code: string): Promise<Space>
   setMemberPermission(spaceId: string, userId: string, permission: Permission): Promise<void>
   removeMember(spaceId: string, userId: string): Promise<void>
   regenerateInviteCode(spaceId: string): Promise<string>
-
-  /* --- обсуждения --- */
-  listComments(target: { materialId?: string; assignmentId?: string }): Promise<CommentView[]>
-  addComment(input: {
-    space_id: string
-    material_id?: string
-    assignment_id?: string
-    body: string
-  }): Promise<Comment>
-  deleteComment(id: string): Promise<void>
-
-  /* --- тесты --- */
-  listQuizzes(spaceId: string): Promise<QuizView[]>
-  createQuiz(input: { space_id: string; title: string; description?: string | null; due_date?: string | null; attempts_allowed?: number }): Promise<Quiz>
-  updateQuiz(id: string, patch: Partial<Pick<Quiz, 'title' | 'description' | 'due_date' | 'attempts_allowed' | 'published'>>): Promise<Quiz>
-  deleteQuiz(id: string): Promise<void>
-  /** Вопросы с правильными ответами — только для преподавателя */
-  listQuizEditor(quizId: string): Promise<Array<QuizQuestion & { options: QuizOption[] }>>
-  saveQuizQuestions(
-    quizId: string,
-    questions: Array<{ text: string; multiple: boolean; points: number; options: Array<{ text: string; is_correct: boolean }> }>,
-  ): Promise<void>
-  /** Тест для прохождения: без правильных ответов */
-  getQuizForStudent(quizId: string): Promise<QuizForStudent>
-  submitQuiz(quizId: string, answers: Record<string, string[]>): Promise<QuizResult>
 
   /* --- папки --- */
   listFolders(spaceId: string): Promise<Folder[]>
@@ -225,22 +192,59 @@ export interface DataProvider {
   updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'done' | 'due_date'>>): Promise<Task>
   deleteTask(id: string): Promise<void>
 
+  /* --- журнал оценок --- */
+  /** Всё содержимое журнала пространства одним запросом */
+  loadGradebook(spaceId: string): Promise<GradebookSnapshot>
+  /** Создаёт шкалы/категории/периоды по умолчанию, если журнал пуст */
+  ensureGradebook(spaceId: string): Promise<GradebookSnapshot>
+
+  createScale(input: Omit<GradeScale, 'id' | 'created_at'>): Promise<GradeScale>
+  updateScale(id: string, patch: Partial<Omit<GradeScale, 'id' | 'space_id'>>): Promise<GradeScale>
+  deleteScale(id: string): Promise<void>
+
+  createPeriod(input: Omit<GradePeriod, 'id' | 'created_at'>): Promise<GradePeriod>
+  updatePeriod(id: string, patch: Partial<Omit<GradePeriod, 'id' | 'space_id'>>): Promise<GradePeriod>
+  deletePeriod(id: string): Promise<void>
+
+  createCategory(input: Omit<GradeCategory, 'id' | 'created_at'>): Promise<GradeCategory>
+  updateCategory(id: string, patch: Partial<Omit<GradeCategory, 'id' | 'space_id'>>): Promise<GradeCategory>
+  deleteCategory(id: string): Promise<void>
+
+  createGradeItem(input: CreateGradeItemInput): Promise<GradeItem>
+  updateGradeItem(id: string, patch: Partial<Omit<GradeItem, 'id' | 'space_id'>>): Promise<GradeItem>
+  deleteGradeItem(id: string): Promise<void>
+
+  /* критерии оценивания */
+  createCriterion(
+    input: Omit<GradeCriterion, 'id' | 'created_at'>,
+  ): Promise<GradeCriterion>
+  updateCriterion(
+    id: string,
+    patch: Partial<Omit<GradeCriterion, 'id' | 'space_id'>>,
+  ): Promise<GradeCriterion>
+  deleteCriterion(id: string): Promise<void>
+  /** Проставляет баллы по критериям и записывает сумму в оценку за работу */
+  setCriterionScores(
+    itemId: string,
+    studentId: string,
+    values: Array<Pick<CriterionScore, 'criterion_id' | 'score'>>,
+  ): Promise<Grade>
+
+  /** Upsert одной клетки журнала */
+  setGrade(itemId: string, studentId: string, input: GradeInput): Promise<Grade>
+  clearGrade(itemId: string, studentId: string): Promise<void>
+
+  setAttendance(
+    spaceId: string,
+    studentId: string,
+    date: string,
+    status: AttendanceStatus,
+    note?: string | null,
+  ): Promise<Attendance>
+  clearAttendance(spaceId: string, studentId: string, date: string): Promise<void>
+
   /* --- realtime --- */
   subscribe(cb: (e: ChangeEvent) => void): () => void
-
-  /** Кто сейчас открыл это пространство. Возвращает функцию отписки. */
-  joinPresence?(
-    spaceId: string,
-    me: Pick<User, 'id' | 'name' | 'avatar'>,
-    onChange: (people: Array<Pick<User, 'id' | 'name' | 'avatar'>>) => void,
-  ): () => void
-
-  /** Живая передача текста конспекта соавторам, пока он ещё не сохранён. */
-  joinNoteChannel?(
-    materialId: string,
-    me: Pick<User, 'id' | 'name'>,
-    onRemote: (payload: { html: string; by: string; byName: string }) => void,
-  ): { send: (html: string) => void; leave: () => void }
 
   /* --- резервная копия (только локальный режим) --- */
   snapshot?(): string

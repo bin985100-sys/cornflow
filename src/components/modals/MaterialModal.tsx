@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FileUp, Link2, Loader2, Notebook } from 'lucide-react'
 import { db } from '@/lib/db'
 import type { CardColor, MaterialView } from '@/lib/types'
 import { colorFromString, cx, isExternalUrl } from '@/lib/utils'
 import { useApp } from '@/context/AppContext'
-import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { Modal } from '@/components/ui/Modal'
 import { ColorPicker } from '@/components/ui/primitives'
@@ -30,7 +29,6 @@ export function MaterialModal({
   initialFiles?: File[]
 }) {
   const { space, folders, tags, refresh } = useApp()
-  const { user } = useAuth()
   const toast = useToast()
 
   const [kind, setKind] = useState<MaterialKind>(initialKind)
@@ -42,9 +40,6 @@ export function MaterialModal({
   const [folder, setFolder] = useState<string | null>(folderId)
   const [tagIds, setTagIds] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  const [coEditor, setCoEditor] = useState<string | null>(null)
-  const noteChannel = useRef<{ send: (html: string) => void; leave: () => void } | null>(null)
-  const coTimer = useRef<number | undefined>(undefined)
 
   const uploader = useUploader({
     spaceId: space?.id ?? null,
@@ -80,23 +75,6 @@ export function MaterialModal({
     }
     return folders.map((f) => ({ id: f.id, label: path(f.id) })).sort((a, b) => a.label.localeCompare(b.label, 'ru'))
   }, [folders])
-
-  /* Совместное редактирование конспекта: текст соавтора приходит сразу */
-  useEffect(() => {
-    if (!open || kind !== 'note' || !editing || !user || !db.joinNoteChannel) return
-    const channel = db.joinNoteChannel(editing.id, { id: user.id, name: user.name }, (payload) => {
-      setContent(payload.html)
-      setCoEditor(payload.byName)
-      window.clearTimeout(coTimer.current)
-      coTimer.current = window.setTimeout(() => setCoEditor(null), 3000)
-    })
-    noteChannel.current = channel
-    return () => {
-      channel.leave()
-      noteChannel.current = null
-      setCoEditor(null)
-    }
-  }, [open, kind, editing, user])
 
   async function save() {
     if (!space) return
@@ -245,23 +223,8 @@ export function MaterialModal({
 
         {kind === 'note' && (
           <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-ink-2">Содержимое</span>
-              {coEditor && (
-                <span className="flex animate-fade-in items-center gap-1.5 rounded-pill bg-surface-2 px-2 py-0.5 text-[11.5px] text-ink-2">
-                  <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-[color:var(--cf-green-acc)]" />
-                  {coEditor} редактирует прямо сейчас
-                </span>
-              )}
-            </div>
-            <NoteEditor
-              value={content}
-              onChange={(html) => {
-                setContent(html)
-                noteChannel.current?.send(html)
-              }}
-              minHeight={260}
-            />
+            <span className="mb-1.5 block text-[13px] font-medium text-ink-2">Содержимое</span>
+            <NoteEditor value={content} onChange={setContent} minHeight={260} />
           </div>
         )}
 

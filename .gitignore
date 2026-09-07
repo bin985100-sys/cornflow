@@ -7,7 +7,3 @@ dist-ssr
 .DS_Store
 .vite
 *.tsbuildinfo
-.vercel
-_to_delete
-cornflow-google-fix
-cornflow-google-fix.zip

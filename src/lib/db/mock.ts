@@ -1,7 +1,17 @@
 import type {
   Assignment,
   AssignmentView,
+  Attendance,
+  AttendanceStatus,
+  CriterionScore,
   Folder,
+  Grade,
+  GradeCategory,
+  GradeCriterion,
+  GradeItem,
+  GradePeriod,
+  GradeScale,
+  GradebookSnapshot,
   Material,
   MaterialTag,
   MaterialView,
@@ -16,25 +26,31 @@ import type {
   Tag,
   Task,
   User,
-  Comment,
-  CommentView,
-  Quiz,
-  QuizAttempt,
-  QuizForStudent,
-  QuizOption,
-  QuizQuestion,
-  QuizResult,
-  QuizView,
 } from '../types'
-import { colorFromString, inviteCode, nowIso, uid } from '../utils'
+import {
+  colorFromString,
+  formatBytes,
+  inviteCode,
+  nowIso,
+  resolveMime,
+  safeFileKey,
+  uid,
+} from '../utils'
 import { blobUrl, deleteBlob, putBlob } from './idb'
+import {
+  DEFAULT_CATEGORIES,
+  defaultPeriods,
+  presetByKey,
+} from '../grading'
 import type {
   ChangeEvent,
   CreateAssignmentInput,
   CreateFolderInput,
   CreateMaterialInput,
+  CreateGradeItemInput,
   CreateSpaceInput,
   DataProvider,
+  GradeInput,
   SignInInput,
   SignUpInput,
   UploadResult,
@@ -60,10 +76,14 @@ interface MockDB {
   starred: Starred[]
   tasks: Task[]
   progress: Progress[]
-  comments: Comment[]
-  quizzes: Quiz[]
-  quiz_questions: Array<QuizQuestion & { options: QuizOption[] }>
-  quiz_attempts: QuizAttempt[]
+  grade_scales: GradeScale[]
+  grade_periods: GradePeriod[]
+  grade_categories: GradeCategory[]
+  grade_items: GradeItem[]
+  grades: Grade[]
+  grade_criteria: GradeCriterion[]
+  criterion_scores: CriterionScore[]
+  attendance: Attendance[]
 }
 
 function emptyDb(): MockDB {
@@ -81,10 +101,14 @@ function emptyDb(): MockDB {
     starred: [],
     tasks: [],
     progress: [],
-    comments: [],
-    quizzes: [],
-    quiz_questions: [],
-    quiz_attempts: [],
+    grade_scales: [],
+    grade_periods: [],
+    grade_categories: [],
+    grade_items: [],
+    grades: [],
+    grade_criteria: [],
+    criterion_scores: [],
+    attendance: [],
   }
 }
 
@@ -273,35 +297,7 @@ export class MockProvider implements DataProvider {
     this.authListeners.forEach((cb) => cb(null))
   }
 
-  async setRole(role: User['role']): Promise<User> {
-    const me = this.me()
-    const inOther = this.db.space_members.some(
-      (m) =>
-        m.user_id === me.id &&
-        this.db.spaces.find((s) => s.id === m.space_id)?.owner_id !== me.id,
-    )
-    if (inOther) {
-      throw new Error('Роль нельзя сменить: вы состоите в чужом курсе')
-    }
-    me.role = role
-    this.persist({ table: 'spaces' })
-    const { password: _pw, ...rest } = me
-    void _pw
-    this.authListeners.forEach((cb) => cb(rest))
-    return rest
-  }
-
-  /** В локальном режиме фото хранится прямо в профиле как data-URL. */
-  async uploadAvatar(file: File): Promise<string> {
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result))
-      reader.onerror = () => reject(new Error('Не удалось прочитать файл'))
-      reader.readAsDataURL(file)
-    })
-  }
-
-  async updateProfile(patch: Partial<Pick<User, 'name' | 'avatar'>>): Promise<User> {
+  async updateProfile(patch: Partial<Pick<User, 'name' | 'avatar' | 'role'>>): Promise<User> {
     const me = this.me()
     Object.assign(me, patch)
     this.persist({ table: 'spaces' })
@@ -358,12 +354,6 @@ export class MockProvider implements DataProvider {
       owner_id: me.id,
       color: input.color ?? colorFromString(input.name),
       invite_code: inviteCode(),
-      join_open: true,
-      is_locked: false,
-      student_upload: false,
-      show_assignments: true,
-      show_calendar: true,
-      show_members: true,
       created_at: nowIso(),
     }
     this.db.spaces.push(space)
@@ -401,6 +391,18 @@ export class MockProvider implements DataProvider {
     this.db.submissions = this.db.submissions.filter((s) => !assignmentIds.includes(s.assignment_id))
     this.db.starred = this.db.starred.filter((s) => !materialIds.includes(s.material_id))
     this.db.progress = this.db.progress.filter((p) => !materialIds.includes(p.material_id))
+    const itemIds = this.db.grade_items.filter((i) => i.space_id === id).map((i) => i.id)
+    this.db.grade_items = this.db.grade_items.filter((i) => i.space_id !== id)
+    this.db.grades = this.db.grades.filter((g) => !itemIds.includes(g.item_id))
+    this.db.grade_scales = this.db.grade_scales.filter((x) => x.space_id !== id)
+    this.db.grade_periods = this.db.grade_periods.filter((x) => x.space_id !== id)
+    this.db.grade_categories = this.db.grade_categories.filter((x) => x.space_id !== id)
+    const criterionIds = this.db.grade_criteria.filter((c) => c.space_id === id).map((c) => c.id)
+    this.db.grade_criteria = this.db.grade_criteria.filter((c) => c.space_id !== id)
+    this.db.criterion_scores = this.db.criterion_scores.filter(
+      (cs) => !criterionIds.includes(cs.criterion_id),
+    )
+    this.db.attendance = this.db.attendance.filter((x) => x.space_id !== id)
     this.persist({ table: 'spaces' })
   }
 
@@ -449,235 +451,6 @@ export class MockProvider implements DataProvider {
   }
 
   /* ---------------------------------- папки ------------------------------ */
-
-
-  /* ------------------------------ обсуждения ----------------------------- */
-
-  async listComments(target: { materialId?: string; assignmentId?: string }): Promise<CommentView[]> {
-    const rows = this.db.comments
-      .filter((c) =>
-        target.materialId ? c.material_id === target.materialId : c.assignment_id === target.assignmentId,
-      )
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))
-    return delay(
-      rows.map((c) => {
-        const u = this.db.users.find((x) => x.id === c.author_id)
-        return {
-          ...c,
-          author: u ? { id: u.id, name: u.name, avatar: u.avatar } : null,
-        }
-      }),
-      40,
-    )
-  }
-
-  async addComment(input: {
-    space_id: string
-    material_id?: string
-    assignment_id?: string
-    body: string
-  }): Promise<Comment> {
-    const me = this.me()
-    this.assertSpaceAccess(input.space_id)
-    const comment: Comment = {
-      id: uid('cmt'),
-      space_id: input.space_id,
-      material_id: input.material_id ?? null,
-      assignment_id: input.assignment_id ?? null,
-      author_id: me.id,
-      body: input.body.trim(),
-      created_at: nowIso(),
-    }
-    this.db.comments.push(comment)
-    this.persist({ table: 'materials', spaceId: input.space_id })
-    return comment
-  }
-
-  async deleteComment(id: string): Promise<void> {
-    const me = this.me()
-    const c = this.db.comments.find((x) => x.id === id)
-    if (!c) return
-    const space = this.db.spaces.find((s) => s.id === c.space_id)
-    if (c.author_id !== me.id && space?.owner_id !== me.id) {
-      throw new Error('Можно удалять только свои комментарии')
-    }
-    this.db.comments = this.db.comments.filter((x) => x.id !== id)
-    this.persist({ table: 'materials', spaceId: c.space_id })
-  }
-
-  /* -------------------------------- тесты -------------------------------- */
-
-  async listQuizzes(spaceId: string): Promise<QuizView[]> {
-    const me = this.me()
-    const canManage = this.db.spaces.find((s) => s.id === spaceId)?.owner_id === me.id
-    return delay(
-      this.db.quizzes
-        .filter((q) => q.space_id === spaceId && (q.published || canManage))
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))
-        .map((q) => {
-          const qq = this.db.quiz_questions.filter((x) => x.quiz_id === q.id)
-          const attempts = this.db.quiz_attempts.filter((a) => a.quiz_id === q.id)
-          const mine = attempts
-            .filter((a) => a.student_id === me.id)
-            .sort((a, b) => b.score - a.score)[0]
-          return {
-            ...q,
-            questions: qq.length,
-            points: qq.reduce((sum, x) => sum + x.points, 0),
-            myAttempt: mine ?? null,
-            attempts: attempts.map((a) => {
-              const u = this.db.users.find((x) => x.id === a.student_id)
-              return { ...a, student: u ? { id: u.id, name: u.name, avatar: u.avatar } : null }
-            }),
-          }
-        }),
-      60,
-    )
-  }
-
-  async createQuiz(input: {
-    space_id: string
-    title: string
-    description?: string | null
-    due_date?: string | null
-    attempts_allowed?: number
-  }): Promise<Quiz> {
-    const me = this.me()
-    this.assertSpaceAccess(input.space_id, true)
-    const quiz: Quiz = {
-      id: uid('quiz'),
-      space_id: input.space_id,
-      title: input.title.trim(),
-      description: input.description ?? null,
-      due_date: input.due_date ?? null,
-      attempts_allowed: input.attempts_allowed ?? 1,
-      shuffle: true,
-      published: false,
-      author_id: me.id,
-      created_at: nowIso(),
-    }
-    this.db.quizzes.push(quiz)
-    this.persist({ table: 'assignments', spaceId: input.space_id })
-    return quiz
-  }
-
-  async updateQuiz(id: string, patch: Partial<Quiz>): Promise<Quiz> {
-    const q = this.db.quizzes.find((x) => x.id === id)
-    if (!q) throw new Error('Тест не найден')
-    this.assertSpaceAccess(q.space_id, true)
-    Object.assign(q, patch)
-    this.persist({ table: 'assignments', spaceId: q.space_id })
-    return q
-  }
-
-  async deleteQuiz(id: string): Promise<void> {
-    const q = this.db.quizzes.find((x) => x.id === id)
-    if (!q) return
-    this.assertSpaceAccess(q.space_id, true)
-    this.db.quizzes = this.db.quizzes.filter((x) => x.id !== id)
-    this.db.quiz_questions = this.db.quiz_questions.filter((x) => x.quiz_id !== id)
-    this.db.quiz_attempts = this.db.quiz_attempts.filter((x) => x.quiz_id !== id)
-    this.persist({ table: 'assignments', spaceId: q.space_id })
-  }
-
-  async listQuizEditor(quizId: string): Promise<Array<QuizQuestion & { options: QuizOption[] }>> {
-    return delay(
-      this.db.quiz_questions
-        .filter((q) => q.quiz_id === quizId)
-        .sort((a, b) => a.position - b.position),
-      40,
-    )
-  }
-
-  async saveQuizQuestions(
-    quizId: string,
-    questions: Array<{
-      text: string
-      multiple: boolean
-      points: number
-      options: Array<{ text: string; is_correct: boolean }>
-    }>,
-  ): Promise<void> {
-    const q = this.db.quizzes.find((x) => x.id === quizId)
-    if (!q) throw new Error('Тест не найден')
-    this.assertSpaceAccess(q.space_id, true)
-    this.db.quiz_questions = this.db.quiz_questions.filter((x) => x.quiz_id !== quizId)
-    questions.forEach((question, i) => {
-      const qid = uid('qq')
-      this.db.quiz_questions.push({
-        id: qid,
-        quiz_id: quizId,
-        position: i,
-        text: question.text.trim(),
-        multiple: question.multiple,
-        points: question.points,
-        options: question.options.map((o, k) => ({
-          id: uid('qo'),
-          question_id: qid,
-          position: k,
-          text: o.text.trim(),
-          is_correct: o.is_correct,
-        })),
-      })
-    })
-    this.persist({ table: 'assignments', spaceId: q.space_id })
-  }
-
-  async getQuizForStudent(quizId: string): Promise<QuizForStudent> {
-    const me = this.me()
-    const q = this.db.quizzes.find((x) => x.id === quizId)
-    if (!q) throw new Error('Тест не найден')
-    return {
-      id: q.id,
-      title: q.title,
-      description: q.description,
-      due_date: q.due_date,
-      attempts_allowed: q.attempts_allowed,
-      attempts_used: this.db.quiz_attempts.filter((a) => a.quiz_id === q.id && a.student_id === me.id).length,
-      questions: this.db.quiz_questions
-        .filter((x) => x.quiz_id === quizId)
-        .sort((a, b) => a.position - b.position)
-        .map((x) => ({
-          id: x.id,
-          text: x.text,
-          multiple: x.multiple,
-          points: x.points,
-          options: x.options.map((o) => ({ id: o.id, text: o.text })),
-        })),
-    }
-  }
-
-  async submitQuiz(quizId: string, answers: Record<string, string[]>): Promise<QuizResult> {
-    const me = this.me()
-    const q = this.db.quizzes.find((x) => x.id === quizId)
-    if (!q) throw new Error('Тест не найден')
-    const used = this.db.quiz_attempts.filter((a) => a.quiz_id === q.id && a.student_id === me.id).length
-    if (used >= q.attempts_allowed) throw new Error(`Попытки закончились: разрешено ${q.attempts_allowed}`)
-
-    let score = 0
-    let max = 0
-    for (const question of this.db.quiz_questions.filter((x) => x.quiz_id === quizId)) {
-      max += question.points
-      const chosen = [...(answers[question.id] ?? [])].sort()
-      const correct = question.options.filter((o) => o.is_correct).map((o) => o.id).sort()
-      if (correct.length && chosen.length === correct.length && chosen.every((id, i) => id === correct[i])) {
-        score += question.points
-      }
-    }
-    const late = Boolean(q.due_date && new Date() > new Date(q.due_date))
-    this.db.quiz_attempts.push({
-      id: uid('qa'),
-      quiz_id: quizId,
-      student_id: me.id,
-      answers,
-      score,
-      max_score: max,
-      is_late: late,
-      created_at: nowIso(),
-    })
-    this.persist({ table: 'assignments', spaceId: q.space_id })
-    return { score, max_score: max, is_late: late, attempts_left: q.attempts_allowed - used - 1 }
-  }
 
   async listFolders(spaceId: string): Promise<Folder[]> {
     return delay(
@@ -838,20 +611,36 @@ export class MockProvider implements DataProvider {
     onProgress?: (pct: number) => void,
   ): Promise<UploadResult> {
     this.assertSpaceAccess(spaceId, true)
-    const key = `${spaceId}/${uid()}-${file.name}`
+    const mime = resolveMime(file)
+    // Ключ хранит настоящее расширение — по нему восстанавливается MIME
+    const key = `${spaceId}/${uid()}-${safeFileKey(file.name)}`
+
     // Имитируем прогресс загрузки, чтобы прогресс-бар был честным элементом UI
     const steps = 12
     for (let i = 1; i <= steps; i++) {
       await new Promise((r) => setTimeout(r, 25 + Math.random() * 35))
       onProgress?.(Math.round((i / steps) * 92))
     }
-    await putBlob(key, file)
+
+    try {
+      await putBlob(key, file, mime)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : ''
+      if (/quota|space|storage/i.test(message)) {
+        throw new Error(
+          `Файл «${file.name}» (${formatBytes(file.size)}) не поместился в хранилище браузера. ` +
+            'Освободите место, удалив ненужные материалы, или подключите Supabase — там лимит на файл гораздо больше.',
+        )
+      }
+      throw new Error(`Не удалось сохранить файл «${file.name}»: ${message || 'ошибка хранилища'}`)
+    }
+
     onProgress?.(100)
     return {
       file_url: `idb:${key}`,
       file_name: file.name,
       file_size: file.size,
-      mime_type: file.type || 'application/octet-stream',
+      mime_type: mime,
     }
   }
 
@@ -992,7 +781,6 @@ export class MockProvider implements DataProvider {
       title: input.title.trim(),
       description: input.description ?? null,
       due_date: input.due_date ?? null,
-      allow_late: input.allow_late ?? true,
       attachments: input.attachments ?? [],
       author_id: me.id,
       created_at: nowIso(),
@@ -1028,15 +816,8 @@ export class MockProvider implements DataProvider {
     const assignment = this.db.assignments.find((a) => a.id === assignmentId)
     if (!assignment) throw new Error('Задание не найдено')
     this.assertSpaceAccess(assignment.space_id)
-    const late = Boolean(assignment.due_date && new Date() > new Date(assignment.due_date))
-    if (late && !assignment.allow_late) {
-      throw new Error('Срок сдачи истёк — преподаватель закрыл приём работ')
-    }
-    const existing = this.db.submissions.find(
-      (s) => s.assignment_id === assignmentId && s.student_id === me.id,
-    )
-    let sub: Submission
-    if (!existing) {
+    let sub = this.db.submissions.find((s) => s.assignment_id === assignmentId && s.student_id === me.id)
+    if (!sub) {
       sub = {
         id: uid('sub'),
         assignment_id: assignmentId,
@@ -1046,16 +827,13 @@ export class MockProvider implements DataProvider {
         attachments: payload.attachments ?? [],
         grade: null,
         submitted_at: nowIso(),
-        is_late: late,
       }
       this.db.submissions.push(sub)
     } else {
-      existing.status = 'submitted'
-      existing.comment = payload.comment ?? existing.comment
-      existing.attachments = payload.attachments ?? existing.attachments
-      existing.submitted_at = nowIso()
-      existing.is_late = late
-      sub = existing
+      sub.status = 'submitted'
+      sub.comment = payload.comment ?? sub.comment
+      sub.attachments = payload.attachments ?? sub.attachments
+      sub.submitted_at = nowIso()
     }
     this.persist({ table: 'submissions', spaceId: assignment.space_id })
     return sub
@@ -1068,8 +846,409 @@ export class MockProvider implements DataProvider {
     if (assignment) this.assertSpaceAccess(assignment.space_id, true)
     sub.grade = grade
     sub.status = grade === null ? 'submitted' : 'graded'
+
+    // Оценка за задание попадает в связанную колонку журнала —
+    // так же, как это делает триггер в Supabase.
+    if (grade !== null && assignment) {
+      const item = this.db.grade_items.find((i) => i.assignment_id === assignment.id)
+      if (item) {
+        const existing = this.db.grades.find(
+          (g) => g.item_id === item.id && g.student_id === sub.student_id,
+        )
+        if (existing) {
+          existing.score = grade
+          existing.flag = 'none'
+          existing.updated_at = nowIso()
+        } else {
+          this.db.grades.push({
+            id: uid('grd'),
+            item_id: item.id,
+            student_id: sub.student_id,
+            score: grade,
+            flag: 'none',
+            comment: null,
+            graded_by: this.sessionUserId(),
+            updated_at: nowIso(),
+          })
+        }
+      }
+    }
+
     this.persist({ table: 'submissions', spaceId: assignment?.space_id ?? null })
     return sub
+  }
+
+  /* ------------------------------ журнал оценок -------------------------- */
+
+  private spaceStudents(spaceId: string) {
+    return this.db.space_members
+      .filter((m) => m.space_id === spaceId)
+      .map((m) => this.db.users.find((u) => u.id === m.user_id))
+      .filter((u): u is User & { password: string } => !!u)
+      .map((u) => ({ id: u.id, name: u.name, avatar: u.avatar, role: u.role }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+  }
+
+  private gradebookOf(spaceId: string): GradebookSnapshot {
+    const items = this.db.grade_items.filter((i) => i.space_id === spaceId)
+    const itemIds = new Set(items.map((i) => i.id))
+    return {
+      scales: this.db.grade_scales.filter((x) => x.space_id === spaceId),
+      periods: this.db.grade_periods
+        .filter((x) => x.space_id === spaceId)
+        .sort((a, b) => a.start_date.localeCompare(b.start_date)),
+      categories: this.db.grade_categories.filter((x) => x.space_id === spaceId),
+      items: items.sort((a, b) => a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at)),
+      grades: this.db.grades.filter((g) => itemIds.has(g.item_id)),
+      criteria: this.db.grade_criteria
+        .filter((c) => c.space_id === spaceId)
+        .sort((a, b) => a.position - b.position),
+      criterionScores: this.db.criterion_scores.filter((cs) =>
+        this.db.grade_criteria.some((c) => c.id === cs.criterion_id && c.space_id === spaceId),
+      ),
+      attendance: this.db.attendance.filter((x) => x.space_id === spaceId),
+      students: this.spaceStudents(spaceId),
+    }
+  }
+
+  async loadGradebook(spaceId: string): Promise<GradebookSnapshot> {
+    return delay(this.gradebookOf(spaceId))
+  }
+
+  async ensureGradebook(spaceId: string): Promise<GradebookSnapshot> {
+    this.assertSpaceAccess(spaceId)
+    let touched = false
+
+    if (!this.db.grade_scales.some((x) => x.space_id === spaceId)) {
+      const preset = presetByKey('eight').build()
+      this.db.grade_scales.push({
+        ...preset,
+        id: uid('scl'),
+        space_id: spaceId,
+        is_default: true,
+        created_at: nowIso(),
+      })
+      touched = true
+    }
+    if (!this.db.grade_categories.some((x) => x.space_id === spaceId)) {
+      DEFAULT_CATEGORIES.forEach((c) =>
+        this.db.grade_categories.push({ ...c, id: uid('cat'), space_id: spaceId, created_at: nowIso() }),
+      )
+      touched = true
+    }
+    if (!this.db.grade_periods.some((x) => x.space_id === spaceId)) {
+      defaultPeriods().forEach((p) =>
+        this.db.grade_periods.push({ ...p, id: uid('per'), space_id: spaceId, created_at: nowIso() }),
+      )
+      touched = true
+    }
+    if (touched) this.persist({ table: 'gradebook', spaceId })
+    return this.gradebookOf(spaceId)
+  }
+
+  async createScale(input: Omit<GradeScale, 'id' | 'created_at'>): Promise<GradeScale> {
+    this.assertSpaceAccess(input.space_id, true)
+    const scale: GradeScale = { ...input, id: uid('scl'), created_at: nowIso() }
+    if (scale.is_default) {
+      this.db.grade_scales.forEach((x) => {
+        if (x.space_id === scale.space_id) x.is_default = false
+      })
+    }
+    this.db.grade_scales.push(scale)
+    this.persist({ table: 'gradebook', spaceId: scale.space_id })
+    return scale
+  }
+
+  async updateScale(id: string, patch: Partial<GradeScale>): Promise<GradeScale> {
+    const scale = this.db.grade_scales.find((x) => x.id === id)
+    if (!scale) throw new Error('Шкала не найдена')
+    this.assertSpaceAccess(scale.space_id, true)
+    if (patch.is_default) {
+      this.db.grade_scales.forEach((x) => {
+        if (x.space_id === scale.space_id) x.is_default = false
+      })
+    }
+    Object.assign(scale, patch)
+    this.persist({ table: 'gradebook', spaceId: scale.space_id })
+    return scale
+  }
+
+  async deleteScale(id: string): Promise<void> {
+    const scale = this.db.grade_scales.find((x) => x.id === id)
+    if (!scale) return
+    this.assertSpaceAccess(scale.space_id, true)
+    const rest = this.db.grade_scales.filter((x) => x.space_id === scale.space_id && x.id !== id)
+    if (!rest.length) throw new Error('Нужна хотя бы одна шкала оценивания')
+    this.db.grade_scales = this.db.grade_scales.filter((x) => x.id !== id)
+    if (scale.is_default) rest[0].is_default = true
+    this.db.grade_items.forEach((i) => {
+      if (i.scale_id === id) i.scale_id = null
+    })
+    this.persist({ table: 'gradebook', spaceId: scale.space_id })
+  }
+
+  async createPeriod(input: Omit<GradePeriod, 'id' | 'created_at'>): Promise<GradePeriod> {
+    this.assertSpaceAccess(input.space_id, true)
+    const period: GradePeriod = { ...input, id: uid('per'), created_at: nowIso() }
+    if (period.is_current) {
+      this.db.grade_periods.forEach((x) => {
+        if (x.space_id === period.space_id) x.is_current = false
+      })
+    }
+    this.db.grade_periods.push(period)
+    this.persist({ table: 'gradebook', spaceId: period.space_id })
+    return period
+  }
+
+  async updatePeriod(id: string, patch: Partial<GradePeriod>): Promise<GradePeriod> {
+    const period = this.db.grade_periods.find((x) => x.id === id)
+    if (!period) throw new Error('Период не найден')
+    this.assertSpaceAccess(period.space_id, true)
+    if (patch.is_current) {
+      this.db.grade_periods.forEach((x) => {
+        if (x.space_id === period.space_id) x.is_current = false
+      })
+    }
+    Object.assign(period, patch)
+    this.persist({ table: 'gradebook', spaceId: period.space_id })
+    return period
+  }
+
+  async deletePeriod(id: string): Promise<void> {
+    const period = this.db.grade_periods.find((x) => x.id === id)
+    if (!period) return
+    this.assertSpaceAccess(period.space_id, true)
+    this.db.grade_periods = this.db.grade_periods.filter((x) => x.id !== id)
+    this.db.grade_items.forEach((i) => {
+      if (i.period_id === id) i.period_id = null
+    })
+    this.persist({ table: 'gradebook', spaceId: period.space_id })
+  }
+
+  async createCategory(input: Omit<GradeCategory, 'id' | 'created_at'>): Promise<GradeCategory> {
+    this.assertSpaceAccess(input.space_id, true)
+    const category: GradeCategory = { ...input, id: uid('cat'), created_at: nowIso() }
+    this.db.grade_categories.push(category)
+    this.persist({ table: 'gradebook', spaceId: category.space_id })
+    return category
+  }
+
+  async updateCategory(id: string, patch: Partial<GradeCategory>): Promise<GradeCategory> {
+    const category = this.db.grade_categories.find((x) => x.id === id)
+    if (!category) throw new Error('Категория не найдена')
+    this.assertSpaceAccess(category.space_id, true)
+    Object.assign(category, patch)
+    this.persist({ table: 'gradebook', spaceId: category.space_id })
+    return category
+  }
+
+  async deleteCategory(id: string): Promise<void> {
+    const category = this.db.grade_categories.find((x) => x.id === id)
+    if (!category) return
+    this.assertSpaceAccess(category.space_id, true)
+    this.db.grade_categories = this.db.grade_categories.filter((x) => x.id !== id)
+    this.db.grade_items.forEach((i) => {
+      if (i.category_id === id) i.category_id = null
+    })
+    this.persist({ table: 'gradebook', spaceId: category.space_id })
+  }
+
+  async createGradeItem(input: CreateGradeItemInput): Promise<GradeItem> {
+    this.assertSpaceAccess(input.space_id, true)
+    const defaultScale = this.db.grade_scales.find((x) => x.space_id === input.space_id && x.is_default)
+    const item: GradeItem = {
+      id: uid('gi'),
+      space_id: input.space_id,
+      period_id: input.period_id ?? null,
+      category_id: input.category_id ?? null,
+      assignment_id: input.assignment_id ?? null,
+      title: input.title.trim() || 'Работа',
+      date: input.date,
+      max_score: input.max_score ?? defaultScale?.max_value ?? 5,
+      weight: input.weight ?? 1,
+      scale_id: input.scale_id ?? null,
+      created_at: nowIso(),
+    }
+    this.db.grade_items.push(item)
+    this.persist({ table: 'gradebook', spaceId: item.space_id })
+    return item
+  }
+
+  async updateGradeItem(id: string, patch: Partial<GradeItem>): Promise<GradeItem> {
+    const item = this.db.grade_items.find((x) => x.id === id)
+    if (!item) throw new Error('Работа не найдена')
+    this.assertSpaceAccess(item.space_id, true)
+    Object.assign(item, patch)
+    this.persist({ table: 'gradebook', spaceId: item.space_id })
+    return item
+  }
+
+  async deleteGradeItem(id: string): Promise<void> {
+    const item = this.db.grade_items.find((x) => x.id === id)
+    if (!item) return
+    this.assertSpaceAccess(item.space_id, true)
+    this.db.grade_items = this.db.grade_items.filter((x) => x.id !== id)
+    this.db.grades = this.db.grades.filter((g) => g.item_id !== id)
+    const dead = this.db.grade_criteria.filter((c) => c.item_id === id).map((c) => c.id)
+    this.db.grade_criteria = this.db.grade_criteria.filter((c) => c.item_id !== id)
+    this.db.criterion_scores = this.db.criterion_scores.filter((cs) => !dead.includes(cs.criterion_id))
+    this.persist({ table: 'gradebook', spaceId: item.space_id })
+  }
+
+  /* ---------------------------- критерии работы -------------------------- */
+
+  async createCriterion(input: Omit<GradeCriterion, 'id' | 'created_at'>): Promise<GradeCriterion> {
+    this.assertSpaceAccess(input.space_id, true)
+    const criterion: GradeCriterion = { ...input, id: uid('crt'), created_at: nowIso() }
+    this.db.grade_criteria.push(criterion)
+    this.persist({ table: 'gradebook', spaceId: criterion.space_id })
+    return criterion
+  }
+
+  async updateCriterion(id: string, patch: Partial<GradeCriterion>): Promise<GradeCriterion> {
+    const criterion = this.db.grade_criteria.find((c) => c.id === id)
+    if (!criterion) throw new Error('Критерий не найден')
+    this.assertSpaceAccess(criterion.space_id, true)
+    Object.assign(criterion, patch)
+    this.persist({ table: 'gradebook', spaceId: criterion.space_id })
+    return criterion
+  }
+
+  async deleteCriterion(id: string): Promise<void> {
+    const criterion = this.db.grade_criteria.find((c) => c.id === id)
+    if (!criterion) return
+    this.assertSpaceAccess(criterion.space_id, true)
+    this.db.grade_criteria = this.db.grade_criteria.filter((c) => c.id !== id)
+    this.db.criterion_scores = this.db.criterion_scores.filter((cs) => cs.criterion_id !== id)
+    this.persist({ table: 'gradebook', spaceId: criterion.space_id })
+  }
+
+  async setCriterionScores(
+    itemId: string,
+    studentId: string,
+    values: Array<Pick<CriterionScore, 'criterion_id' | 'score'>>,
+  ): Promise<Grade> {
+    const me = this.me()
+    const item = this.db.grade_items.find((x) => x.id === itemId)
+    if (!item) throw new Error('Работа не найдена')
+    this.assertSpaceAccess(item.space_id, true)
+
+    for (const v of values) {
+      const existing = this.db.criterion_scores.find(
+        (cs) => cs.criterion_id === v.criterion_id && cs.student_id === studentId,
+      )
+      if (existing) {
+        existing.score = v.score
+        existing.updated_at = nowIso()
+      } else {
+        this.db.criterion_scores.push({
+          id: uid('crs'),
+          criterion_id: v.criterion_id,
+          student_id: studentId,
+          score: v.score,
+          updated_at: nowIso(),
+        })
+      }
+    }
+
+    // Итог за работу — сумма баллов по критериям
+    const filled = values.filter((v) => v.score !== null)
+    const total = filled.length ? filled.reduce((sum, v) => sum + (v.score as number), 0) : null
+
+    let grade = this.db.grades.find((g) => g.item_id === itemId && g.student_id === studentId)
+    if (!grade) {
+      grade = {
+        id: uid('grd'),
+        item_id: itemId,
+        student_id: studentId,
+        score: total,
+        flag: 'none',
+        comment: null,
+        graded_by: me.id,
+        updated_at: nowIso(),
+      }
+      this.db.grades.push(grade)
+    } else {
+      grade.score = total
+      grade.flag = 'none'
+      grade.graded_by = me.id
+      grade.updated_at = nowIso()
+    }
+    this.persist({ table: 'gradebook', spaceId: item.space_id })
+    return grade
+  }
+
+  async setGrade(itemId: string, studentId: string, input: GradeInput): Promise<Grade> {
+    const me = this.me()
+    const item = this.db.grade_items.find((x) => x.id === itemId)
+    if (!item) throw new Error('Работа не найдена')
+    this.assertSpaceAccess(item.space_id, true)
+    let grade = this.db.grades.find((g) => g.item_id === itemId && g.student_id === studentId)
+    if (!grade) {
+      grade = {
+        id: uid('grd'),
+        item_id: itemId,
+        student_id: studentId,
+        score: null,
+        flag: 'none',
+        comment: null,
+        graded_by: me.id,
+        updated_at: nowIso(),
+      }
+      this.db.grades.push(grade)
+    }
+    if (input.score !== undefined) grade.score = input.score
+    if (input.flag !== undefined) grade.flag = input.flag
+    if (input.comment !== undefined) grade.comment = input.comment
+    grade.graded_by = me.id
+    grade.updated_at = nowIso()
+    this.persist({ table: 'gradebook', spaceId: item.space_id })
+    return grade
+  }
+
+  async clearGrade(itemId: string, studentId: string): Promise<void> {
+    const item = this.db.grade_items.find((x) => x.id === itemId)
+    if (item) this.assertSpaceAccess(item.space_id, true)
+    this.db.grades = this.db.grades.filter((g) => !(g.item_id === itemId && g.student_id === studentId))
+    this.persist({ table: 'gradebook', spaceId: item?.space_id ?? null })
+  }
+
+  async setAttendance(
+    spaceId: string,
+    studentId: string,
+    date: string,
+    status: AttendanceStatus,
+    note?: string | null,
+  ): Promise<Attendance> {
+    this.assertSpaceAccess(spaceId, true)
+    let row = this.db.attendance.find(
+      (a) => a.space_id === spaceId && a.student_id === studentId && a.date === date,
+    )
+    if (!row) {
+      row = {
+        id: uid('att'),
+        space_id: spaceId,
+        student_id: studentId,
+        date,
+        status,
+        note: note ?? null,
+        created_at: nowIso(),
+      }
+      this.db.attendance.push(row)
+    } else {
+      row.status = status
+      if (note !== undefined) row.note = note
+    }
+    this.persist({ table: 'gradebook', spaceId })
+    return row
+  }
+
+  async clearAttendance(spaceId: string, studentId: string, date: string): Promise<void> {
+    this.assertSpaceAccess(spaceId, true)
+    this.db.attendance = this.db.attendance.filter(
+      (a) => !(a.space_id === spaceId && a.student_id === studentId && a.date === date),
+    )
+    this.persist({ table: 'gradebook', spaceId })
   }
 
   /* ------------------------------ личные задачи -------------------------- */

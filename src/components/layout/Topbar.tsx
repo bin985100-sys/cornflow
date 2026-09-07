@@ -4,7 +4,6 @@ import {
   ArrowDownWideNarrow,
   Bell,
   Command,
-  Home,
   LayoutGrid,
   List,
   Menu as MenuIcon,
@@ -22,7 +21,6 @@ const TITLES: Record<string, string> = {
   '/app': 'Дашборд',
   '/app/library': 'Все материалы',
   '/app/assignments': 'Задания',
-  '/app/quizzes': 'Тесты',
   '/app/tasks': 'Задачи',
   '/app/calendar': 'Календарь',
   '/app/starred': 'Избранное',
@@ -95,13 +93,12 @@ export function Topbar() {
   }, [allAssignments])
 
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-surface/85 backdrop-blur-xl lg:rounded-t-[26px]">
+    <header className="sticky top-0 z-20 border-b border-line bg-surface/85 backdrop-blur-xl lg:rounded-t-[26px]">
       <div className="flex h-[64px] items-center gap-3 px-4 lg:px-5">
         <button
-          className={cx('cf-icon-btn', sidebarOpen && 'lg:hidden')}
+          className="cf-icon-btn lg:hidden"
           onClick={() => setSidebarOpen(!sidebarOpen)}
-          aria-label={sidebarOpen ? 'Свернуть боковую панель' : 'Развернуть боковую панель'}
-          title={sidebarOpen ? 'Свернуть панель' : 'Развернуть панель'}
+          aria-label="Меню"
         >
           <MenuIcon size={17} />
         </button>
@@ -154,7 +151,7 @@ export function Topbar() {
 
           {/* выпадающие результаты */}
           {focused && query.length > 0 && (
-            <div className="absolute left-0 right-0 top-[calc(100%+10px)] z-50 animate-scale-in overflow-hidden rounded-[22px] border border-line bg-surface p-2 shadow-pop">
+            <div className="absolute left-0 right-0 top-[calc(100%+10px)] z-[60] animate-scale-in overflow-hidden rounded-[22px] border border-line bg-surface p-2 shadow-pop">
               {results.length === 0 ? (
                 <p className="px-3 py-6 text-center text-[13px] text-ink-3">
                   Ничего не найдено по запросу «{excerpt(query, 40)}»
@@ -212,15 +209,6 @@ export function Topbar() {
 
         {/* правые контролы */}
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            className="cf-icon-btn"
-            onClick={() => navigate('/')}
-            title="На главную страницу сайта"
-            aria-label="На главную страницу сайта"
-          >
-            <Home size={16} />
-          </button>
-
           {showViewControls && (
             <>
               <div className="hidden sm:block">
@@ -274,8 +262,8 @@ export function Topbar() {
             </button>
             {bellOpen && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setBellOpen(false)} />
-                <div className="absolute right-0 z-50 mt-2 w-[320px] animate-scale-in overflow-hidden rounded-[22px] border border-line bg-surface p-2 shadow-pop">
+                <div className="fixed inset-0 z-[55]" onClick={() => setBellOpen(false)} />
+                <div className="absolute right-0 z-[60] mt-2 w-[320px] animate-scale-in overflow-hidden rounded-[22px] border border-line bg-surface p-2 shadow-pop">
                   <p className="px-2 py-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
                     Ближайшие дедлайны
                   </p>

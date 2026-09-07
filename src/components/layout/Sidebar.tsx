@@ -10,9 +10,7 @@ import {
   FolderPlus,
   Folder as FolderIcon,
   Globe2,
-  Home,
   LayoutGrid,
-  ListChecks,
   LogOut,
   Moon,
   Plus,
@@ -21,6 +19,7 @@ import {
   Sun,
   UserPlus,
   Users,
+  GraduationCap,
 } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
 import { useAuth } from '@/context/AuthContext'
@@ -33,15 +32,11 @@ import { Menu } from '@/components/ui/Menu'
 import { Logo } from './Logo'
 
 export function Sidebar() {
-  const { spaces, space, setSpaceId, folders, allMaterials, sidebarOpen, setSidebarOpen, canEdit, canManage, isOwner, spaceRoleLabel, online, showAssignments, showCalendar } =
-    useApp()
-  const { user, signOut, isTeacher } = useAuth()
+  const { spaces, space, setSpaceId, folders, allMaterials, sidebarOpen, setSidebarOpen, canEdit } = useApp()
+  const { user, signOut, isTeacher, switchRole } = useAuth()
   const create = useCreate()
   const { theme, toggle } = useTheme()
   const navigate = useNavigate()
-  const onlineTitle = online.length
-    ? `Сейчас в курсе: ${online.map((p) => p.name).join(', ')}`
-    : 'Пока никого нет в сети'
   const [spaceMenu, setSpaceMenu] = useState(false)
 
   const starred = useMemo(() => allMaterials.filter((m) => m.starred).slice(0, 6), [allMaterials])
@@ -70,24 +65,13 @@ export function Sidebar() {
             <button onClick={() => navigate('/app')} className="transition hover:opacity-80">
               <Logo />
             </button>
-            <div className="flex items-center gap-1">
-              <button
-                className="cf-icon-btn"
-                onClick={() => navigate('/')}
-                aria-label="На главную страницу сайта"
-                title="На главную страницу сайта"
-              >
-                <Home size={16} />
-              </button>
-              <button
-                className="cf-icon-btn"
-                onClick={() => setSidebarOpen(false)}
-                aria-label="Свернуть боковую панель"
-                title="Свернуть панель"
-              >
-                <ChevronRight size={16} className="rotate-180" />
-              </button>
-            </div>
+            <button
+              className="cf-icon-btn lg:hidden"
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Свернуть меню"
+            >
+              <ChevronRight size={16} className="rotate-180" />
+            </button>
           </div>
 
           <Menu
@@ -99,14 +83,11 @@ export function Sidebar() {
                     { label: 'Загрузить файлы', icon: Plus, onClick: () => create.newMaterial() },
                     { label: 'Написать конспект', icon: ClipboardList, onClick: () => create.newMaterial({ kind: 'note' }) },
                     { label: 'Добавить ссылку', icon: LayoutGrid, onClick: () => create.newMaterial({ kind: 'link' }) },
+                    { label: 'Новая папка', icon: FolderPlus, onClick: () => create.newFolder(null) },
                   ]
                 : []),
-              ...(canManage
-                ? [
-                    { label: 'Новая папка', icon: FolderPlus, onClick: () => create.newFolder(null) },
-                    { label: 'Новое задание', icon: ClipboardList, onClick: () => create.newAssignment() },
-                    { label: 'Новый тест', icon: ListChecks, onClick: () => navigate('/app/quizzes') },
-                  ]
+              ...(canEdit && isTeacher
+                ? [{ label: 'Новое задание', icon: ClipboardList, onClick: () => create.newAssignment() }]
                 : []),
               { label: '', separator: true },
               { label: 'Новое пространство', icon: Users, onClick: () => create.newSpace() },
@@ -140,7 +121,7 @@ export function Sidebar() {
               <span className="block truncate text-[13.5px] font-semibold text-ink">
                 {space?.name ?? 'Нет пространств'}
               </span>
-              <span className="block truncate text-[11.5px] text-ink-3">
+              <span className="block text-[11.5px] text-ink-3">
                 {space ? `${space.members.length} участник(ов)` : 'создайте первое'}
               </span>
             </span>
@@ -149,31 +130,14 @@ export function Sidebar() {
 
           {space && !spaceMenu && (
             <div className="mt-1.5 flex items-center justify-between px-3.5">
-              <span className="flex items-center gap-1.5" title={onlineTitle}>
-                <AvatarStack people={space.members} size={22} />
-                {online.length > 1 && (
-                  <span className="inline-flex items-center gap-1 rounded-pill bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-2">
-                    <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-[color:var(--cf-green-acc)]" />
-                    {online.length} онлайн
-                  </span>
-                )}
-              </span>
+              <AvatarStack people={space.members} size={22} />
               <button
                 onClick={create.share}
                 className="rounded-pill px-2 py-1 text-[11.5px] font-medium text-brand transition duration-200 hover:bg-brand-soft"
               >
-                {isOwner ? 'Настроить доступ' : 'Участники'}
+                Пригласить
               </button>
             </div>
-          )}
-
-          {space?.is_locked && (
-            <p
-              className="mt-2 rounded-soft px-3 py-2 text-[11.5px] leading-snug"
-              style={{ background: 'var(--cf-red-soft, rgba(229,72,77,.1))', color: 'var(--cf-red-acc)' }}
-            >
-              Пространство закрыто: ученики не видят содержимое, пока вы не откроете его снова.
-            </p>
           )}
 
           {spaceMenu && (
@@ -222,18 +186,18 @@ export function Sidebar() {
         </div>
 
         {/* -------------------------------- навигация -------------------------- */}
-        <nav className="cf-stagger cf-no-scrollbar mt-3 flex-1 overflow-y-auto px-3 pb-4">
+        <nav className="mt-3 flex-1 overflow-y-auto px-3 pb-4 cf-no-scrollbar">
           <SidebarLink to="/app" icon={LayoutGrid} label="Дашборд" end />
           <SidebarLink to="/app/library" icon={FolderIcon} label="Все материалы" />
-          {showAssignments && (
-            <>
-              <SidebarLink to="/app/assignments" icon={ClipboardList} label="Задания" />
-              <SidebarLink to="/app/quizzes" icon={ListChecks} label="Тесты" />
-            </>
-          )}
+          <SidebarLink to="/app/assignments" icon={ClipboardList} label="Задания" />
+          <SidebarLink
+            to="/app/gradebook"
+            icon={GraduationCap}
+            label={isTeacher ? 'Журнал' : 'Дневник'}
+          />
           <SidebarLink to="/app/tasks" icon={CheckSquare} label="Задачи" />
-          {showCalendar && <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />}
-          {isOwner && <SidebarLink to="/app/progress" icon={Users} label="Прогресс учеников" />}
+          <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />
+          {isTeacher && <SidebarLink to="/app/progress" icon={Users} label="Прогресс учеников" />}
 
           {/* Избранное */}
           <SectionTitle
@@ -293,7 +257,6 @@ export function Sidebar() {
           <Menu
             align="left"
             width={244}
-            side="top"
             items={[
               { label: 'Настройки', icon: Settings, onClick: () => navigate('/app/settings') },
               {
@@ -302,7 +265,13 @@ export function Sidebar() {
                 onClick: toggle,
               },
               { label: '', separator: true },
-              { label: 'На главную страницу', icon: Globe2, onClick: () => navigate('/') },
+              {
+                label: isTeacher ? 'Переключиться на ученика' : 'Переключиться на учителя',
+                icon: Users,
+                onClick: () => switchRole(isTeacher ? 'student' : 'teacher'),
+              },
+              { label: '', separator: true },
+              { label: 'О продукте', icon: Globe2, onClick: () => navigate('/') },
               {
                 label: 'Выйти',
                 icon: LogOut,
@@ -318,8 +287,8 @@ export function Sidebar() {
                 <Avatar name={user?.name ?? '?'} src={user?.avatar} size={32} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-semibold text-ink">{user?.name}</span>
-                  <span className="block truncate text-[11.5px] text-ink-3">
-                    {space ? spaceRoleLabel : isTeacher ? 'Учитель' : 'Ученик'}
+                  <span className="block text-[11.5px] text-ink-3">
+                    {isTeacher ? 'Учитель' : 'Ученик'}
                   </span>
                 </span>
                 <Settings size={15} className="shrink-0 text-ink-3" />
@@ -358,27 +327,20 @@ function SidebarLink({
       end={end}
       className={({ isActive }) =>
         cx(
-          'group relative mb-0.5 flex items-center gap-2.5 overflow-hidden rounded-pill px-3 py-2.5 text-[13.5px] font-medium',
-          'transition-[background-color,color,transform] duration-300 ease-out active:scale-[.98]',
+          'group mb-0.5 flex items-center gap-2.5 rounded-pill px-3 py-2.5 text-[13.5px] font-medium transition duration-200 ease-out',
           isActive
             ? 'bg-brand-soft text-brand'
-            : 'text-ink-2 hover:translate-x-[2px] hover:bg-surface-2 hover:text-ink',
+            : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
         )
       }
     >
       {({ isActive }) => (
         <>
-          {isActive && (
-            <span
-              className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 animate-slide-left rounded-r-full bg-brand"
-              aria-hidden
-            />
-          )}
           <Icon
             size={16.5}
             className={cx(
-              'transition-[color,transform] duration-300 ease-out group-hover:scale-110',
-              isActive ? 'scale-110 text-brand' : 'text-ink-3 group-hover:text-ink-2',
+              'transition duration-200',
+              isActive ? 'text-brand' : 'text-ink-3 group-hover:text-ink-2',
             )}
           />
           {label}

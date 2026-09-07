@@ -12,7 +12,6 @@ import {
   Search,
   Users,
 } from 'lucide-react'
-import { db } from '@/lib/db'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { IS_MOCK } from '@/lib/db'
@@ -32,7 +31,6 @@ export function AuthPage() {
   const next = params.get('next') || '/app'
   const [mode, setMode] = useState<Mode>(params.get('mode') === 'signup' ? 'signup' : 'signin')
   const [role, setRole] = useState<Role>('teacher')
-  const [signInFailed, setSignInFailed] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -45,12 +43,10 @@ export function AuthPage() {
     e.preventDefault()
     setBusy(true)
     try {
-      setSignInFailed(false)
       if (mode === 'signin') await signIn({ email, password })
       else await signUp({ name, email, password, role })
       navigate(next, { replace: true })
     } catch (err) {
-      if (mode === 'signin') setSignInFailed(true)
       toast.error(err)
     } finally {
       setBusy(false)
@@ -63,9 +59,6 @@ export function AuthPage() {
       return
     }
     try {
-      // роль и вкладку, с которой уходим, запоминаем: через Google они иначе теряются
-      db.rememberAuthMode?.(mode)
-      if (mode === 'signup') db.rememberPendingRole?.(role)
       // возвращаем ровно туда, куда пользователь шёл (по умолчанию — в приложение)
       await signInWithGoogle(`${window.location.origin}${next.startsWith('/') ? next : '/app'}`)
     } catch (err) {
@@ -255,24 +248,6 @@ export function AuthPage() {
                 autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
               />
             </Field>
-
-            {signInFailed && mode === 'signin' && (
-              <div className="animate-fade-up rounded-2xl border border-[#E5484D]/25 bg-[#FDECEC] p-3.5 text-[12.5px] leading-relaxed text-[#8E2226]">
-                Войти не удалось. Такое бывает по трём причинам: аккаунта с этой почтой ещё нет —{' '}
-                <button
-                  type="button"
-                  className="font-semibold underline"
-                  onClick={() => {
-                    setMode('signup')
-                    setSignInFailed(false)
-                  }}
-                >
-                  создайте его
-                </button>
-                ; аккаунт заведён через Google — тогда войдите кнопкой выше, пароля у него нет;
-                либо пароль введён с ошибкой.
-              </div>
-            )}
 
             <button
               className="inline-flex w-full items-center justify-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-semibold text-white transition hover:brightness-110 active:scale-[.98] disabled:opacity-60"

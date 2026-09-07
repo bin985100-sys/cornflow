@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
+  AlertTriangle,
   CheckCircle2,
   Download,
   ExternalLink,
+  FileDown,
   Loader2,
   Pencil,
   Star,
@@ -18,9 +20,10 @@ import {
   formatBytes,
   formatDateFull,
   hostOf,
+  isInlineViewable,
+  mimeByName,
 } from '@/lib/utils'
 import { Modal } from '@/components/ui/Modal'
-import { CommentThread } from '@/components/comments/CommentThread'
 import { Avatar, TagPill } from '@/components/ui/primitives'
 import { useToast } from '@/context/ToastContext'
 
@@ -142,9 +145,17 @@ export function MaterialViewer({
             Изучено
           </button>
           {url && material.type !== 'link' && (
-            <button className="cf-btn-ghost" onClick={() => download(url, material.file_name ?? material.title)}>
-              <Download size={15} /> Скачать
-            </button>
+            <>
+              <a href={url} target="_blank" rel="noopener noreferrer" className="cf-btn-ghost">
+                <ExternalLink size={15} /> Открыть
+              </a>
+              <button
+                className="cf-btn-ghost"
+                onClick={() => download(url, material.file_name ?? material.title)}
+              >
+                <Download size={15} /> Скачать
+              </button>
+            </>
           )}
           {canEdit && (
             <button className="cf-btn-brand" onClick={() => onEdit(material)}>
@@ -155,10 +166,6 @@ export function MaterialViewer({
       }
     >
       <Body material={material} url={url} loading={loading} />
-
-      <div className="mx-auto mt-8 max-w-3xl border-t border-line pt-6">
-        <CommentThread materialId={material.id} />
-      </div>
     </Modal>
   )
 }
@@ -205,11 +212,25 @@ function Body({
   }
 
   if (!url) {
+    // Файл был, но не нашёлся: локальный режим хранит файлы в этом браузере
+    const lost = !!material.file_url
     return (
-      <div className="flex h-[40vh] flex-col items-center justify-center gap-2 text-center">
-        <p className="text-[15px] font-semibold text-ink">Файл недоступен</p>
-        <p className="max-w-sm text-[13px] text-ink-3">
-          Материал сохранён как запись без файла — добавьте файл через редактирование.
+      <div className="flex h-[40vh] flex-col items-center justify-center gap-2 px-6 text-center">
+        <span
+          className="mb-1 flex h-12 w-12 items-center justify-center rounded-2xl"
+          style={{ background: 'var(--cf-yellow-bg)', color: 'var(--cf-yellow-acc)' }}
+        >
+          <AlertTriangle size={22} />
+        </span>
+        <p className="text-[15px] font-semibold text-ink">
+          {lost ? 'Файл не найден в хранилище' : 'Материал без файла'}
+        </p>
+        <p className="max-w-md text-[13px] text-ink-3">
+          {lost
+            ? 'В локальном режиме файлы лежат в этом браузере: они не переносятся на другое устройство, ' +
+              'теряются при очистке данных сайта и не восстанавливаются из JSON-копии. ' +
+              'Загрузите файл заново через «Редактировать» — или подключите Supabase, тогда файлы будут на сервере.'
+            : 'Это запись без вложения — добавьте файл через «Редактировать».'}
         </p>
       </div>
     )
@@ -255,13 +276,73 @@ function Body({
     )
   }
 
-  // pdf, presentation, document — во встроенном просмотрщике браузера
+  // pdf, презентации, документы — встроенный просмотрщик браузера
+  return <DocumentView material={material} url={url} />
+}
+
+/**
+ * PDF и офисные файлы. Встроенный просмотрщик есть не везде: iOS Safari и часть
+ * мобильных браузеров не рисуют PDF внутри страницы, офисные форматы не умеет
+ * никто. Поэтому — <object> с честным запасным вариантом: открыть или скачать.
+ */
+function DocumentView({ material, url }: { material: MaterialView; url: string }) {
+  const [failed, setFailed] = useState(false)
+  const mime = material.mime_type || mimeByName(material.file_name ?? material.title)
+  const inline = isInlineViewable(mime)
+
+  if (!inline || failed) {
+    return (
+      <div className="mx-auto flex max-w-lg flex-col items-center rounded-card border border-line bg-surface-2/40 p-10 text-center">
+        <span
+          className="flex h-14 w-14 items-center justify-center rounded-2xl"
+          style={{ background: 'var(--cf-blue-bg)', color: 'var(--cf-blue-acc)' }}
+        >
+          <FileDown size={24} />
+        </span>
+        <p className="mt-4 text-[16px] font-semibold text-ink">
+          {material.file_name ?? material.title}
+        </p>
+        <p className="mt-1.5 text-[13.5px] text-ink-3">
+          Этот формат браузер не показывает внутри страницы
+          {material.file_size ? ` · ${formatBytes(material.file_size)}` : ''}
+        </p>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          <a href={url} target="_blank" rel="noopener noreferrer" className="cf-btn-brand">
+            Открыть в новой вкладке <ExternalLink size={15} />
+          </a>
+          <button
+            className="cf-btn-ghost"
+            onClick={() => download(url, material.file_name ?? material.title)}
+          >
+            <Download size={15} /> Скачать
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <iframe
-      src={url}
-      title={material.title}
-      className="h-[74vh] w-full rounded-card border border-line bg-surface-2"
-    />
+    <div className="space-y-2">
+      <object
+        data={url}
+        type={mime}
+        title={material.title}
+        className="h-[70vh] w-full rounded-card border border-line bg-surface-2"
+        onError={() => setFailed(true)}
+      >
+        <iframe
+          src={url}
+          title={material.title}
+          className="h-[70vh] w-full rounded-card border border-line bg-surface-2"
+        />
+      </object>
+      <p className="text-center text-[12px] text-ink-3">
+        Не отображается?{' '}
+        <a href={url} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+          Открыть в новой вкладке
+        </a>
+      </p>
+    </div>
   )
 }
 

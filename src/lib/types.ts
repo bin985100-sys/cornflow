@@ -40,16 +40,6 @@ export interface Space {
   color: CardColor
   invite_code: string
   created_at: string
-  /** приём новых участников по коду */
-  join_open: boolean
-  /** пространство закрыто: содержимое видит только владелец */
-  is_locked: boolean
-  /** ученикам разрешено добавлять материалы */
-  student_upload: boolean
-  /** разделы, доступные ученикам */
-  show_assignments: boolean
-  show_calendar: boolean
-  show_members: boolean
 }
 
 export interface SpaceMember {
@@ -107,8 +97,6 @@ export interface Assignment {
   title: string
   description: string | null
   due_date: string | null
-  /** принимать ли работы после дедлайна */
-  allow_late: boolean
   /** id материалов, прикреплённых к заданию */
   attachments: string[]
   author_id: string
@@ -127,99 +115,6 @@ export interface Submission {
   attachments: string[]
   grade: number | null
   submitted_at: string | null
-  /** работа сдана после дедлайна */
-  is_late: boolean
-}
-
-/** Комментарий под материалом или заданием */
-export interface Comment {
-  id: string
-  space_id: string
-  material_id: string | null
-  assignment_id: string | null
-  author_id: string
-  body: string
-  created_at: string
-}
-
-export interface CommentView extends Comment {
-  author: Pick<User, 'id' | 'name' | 'avatar'> | null
-}
-
-/* ------------------------------- Тесты ----------------------------------- */
-
-export interface Quiz {
-  id: string
-  space_id: string
-  title: string
-  description: string | null
-  due_date: string | null
-  attempts_allowed: number
-  shuffle: boolean
-  published: boolean
-  author_id: string
-  created_at: string
-}
-
-export interface QuizQuestion {
-  id: string
-  quiz_id: string
-  position: number
-  text: string
-  multiple: boolean
-  points: number
-}
-
-export interface QuizOption {
-  id: string
-  question_id: string
-  position: number
-  text: string
-  /** приходит только преподавателю — ученику база это поле не отдаёт */
-  is_correct?: boolean
-}
-
-export interface QuizAttempt {
-  id: string
-  quiz_id: string
-  student_id: string
-  answers: Record<string, string[]>
-  score: number
-  max_score: number
-  is_late: boolean
-  created_at: string
-}
-
-/** Тест в том виде, в каком его получает ученик: без правильных ответов */
-export interface QuizForStudent {
-  id: string
-  title: string
-  description: string | null
-  due_date: string | null
-  attempts_allowed: number
-  attempts_used: number
-  questions: Array<{
-    id: string
-    text: string
-    multiple: boolean
-    points: number
-    options: Array<{ id: string; text: string }>
-  }>
-}
-
-export interface QuizResult {
-  score: number
-  max_score: number
-  is_late: boolean
-  attempts_left: number
-}
-
-export interface QuizView extends Quiz {
-  questions: number
-  points: number
-  /** для ученика — его лучшая попытка; для преподавателя — все попытки */
-  myAttempt: QuizAttempt | null
-  attempts: Array<QuizAttempt & { student: Pick<User, 'id' | 'name' | 'avatar'> | null }>
 }
 
 export interface Starred {
@@ -276,11 +171,11 @@ export interface CalendarEvent {
   id: string
   title: string
   date: string
-  kind: 'assignment' | 'task'
+  kind: 'assignment' | 'task' | 'grade'
   spaceId: string | null
   color: CardColor
   done?: boolean
-  ref: AssignmentView | Task
+  ref: AssignmentView | Task | GradeItem
 }
 
 export interface UploadProgressItem {
@@ -291,4 +186,150 @@ export interface UploadProgressItem {
   status: 'pending' | 'uploading' | 'done' | 'error'
   error?: string
   previewUrl?: string
+}
+
+/* =========================================================================
+   Журнал оценок (школьный дневник внутри пространства)
+   Таблицы — supabase/migrations/0002_gradebook.sql
+   ========================================================================= */
+
+/** Цвет уровня оценки в журнале */
+export type GradeColor = 'green' | 'lime' | 'yellow' | 'orange' | 'red' | 'blue' | 'grey'
+
+/**
+ * Как учитель вводит оценку:
+ * `points` — числом (5-балльная, 100-балльная, любые баллы за работу);
+ * `levels` — выбором уровня из списка (буквенная A–F, зачёт/незачёт).
+ */
+export type ScaleKind = 'points' | 'levels'
+
+/** Уровень шкалы: диапазон процентов → подпись, цвет и числовой эквивалент */
+export interface GradeLevel {
+  id: string
+  label: string
+  /** Нижняя граница уровня в процентах от максимума работы, 0..100 */
+  min_percent: number
+  /** Числовой эквивалент для расчёта среднего (для буквенных шкал — GPA) */
+  value: number
+  color: GradeColor
+}
+
+export interface GradeScale {
+  id: string
+  space_id: string
+  name: string
+  kind: ScaleKind
+  /** Максимум по умолчанию для новых работ (5, 10, 12, 100 …) */
+  max_value: number
+  /** Минимальный балл шкалы — обычно 0 или 1 */
+  min_value: number
+  /** Уровни, отсортированы по убыванию min_percent */
+  levels: GradeLevel[]
+  /** Порог «сдано» в процентах */
+  passing_percent: number
+  is_default: boolean
+  created_at: string
+}
+
+/** Учебный период: четверть, триместр, семестр, модуль */
+export interface GradePeriod {
+  id: string
+  space_id: string
+  name: string
+  start_date: string
+  end_date: string
+  is_current: boolean
+  created_at: string
+}
+
+/** Категория работ с собственным весом: контрольная, домашняя, устный ответ… */
+export interface GradeCategory {
+  id: string
+  space_id: string
+  name: string
+  weight: number
+  color: CardColor
+  created_at: string
+}
+
+/** Колонка журнала — конкретная работа */
+export interface GradeItem {
+  id: string
+  space_id: string
+  period_id: string | null
+  category_id: string | null
+  /** Если работа создана из задания — оценки переносятся автоматически */
+  assignment_id: string | null
+  title: string
+  date: string
+  max_score: number
+  /** Вес работы внутри категории */
+  weight: number
+  /** Своя шкала для этой работы; null — шкала пространства по умолчанию */
+  scale_id: string | null
+  created_at: string
+}
+
+/**
+ * Критерий оценивания работы (рубрика). Учитель добавляет свои критерии
+ * к работе; итоговый балл за работу — сумма баллов по критериям.
+ * item_id = null — критерий-шаблон в библиотеке пространства.
+ */
+export interface GradeCriterion {
+  id: string
+  space_id: string
+  item_id: string | null
+  title: string
+  description: string | null
+  max_score: number
+  position: number
+  created_at: string
+}
+
+/** Балл ученика по одному критерию */
+export interface CriterionScore {
+  id: string
+  criterion_id: string
+  student_id: string
+  score: number | null
+  updated_at: string
+}
+
+/** Отметка вместо балла */
+export type GradeFlag = 'none' | 'absent' | 'excused' | 'pending'
+
+export interface Grade {
+  id: string
+  item_id: string
+  student_id: string
+  score: number | null
+  flag: GradeFlag
+  comment: string | null
+  graded_by: string | null
+  updated_at: string
+}
+
+export type AttendanceStatus = 'present' | 'late' | 'absent' | 'excused'
+
+export interface Attendance {
+  id: string
+  space_id: string
+  student_id: string
+  date: string
+  status: AttendanceStatus
+  note: string | null
+  created_at: string
+}
+
+/** Всё, что нужно журналу за один запрос */
+export interface GradebookSnapshot {
+  scales: GradeScale[]
+  periods: GradePeriod[]
+  categories: GradeCategory[]
+  items: GradeItem[]
+  grades: Grade[]
+  criteria: GradeCriterion[]
+  criterionScores: CriterionScore[]
+  attendance: Attendance[]
+  students: Array<Pick<User, 'id' | 'name' | 'avatar' | 'role'>>
 }

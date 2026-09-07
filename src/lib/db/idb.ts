@@ -2,6 +2,8 @@
    чтобы просмотрщик и скачивание работали без бэкенда (localStorage для
    бинарников не годится — лимит ~5 МБ). */
 
+import { mimeByName } from '../utils'
+
 const DB_NAME = 'cornflow-files'
 const STORE = 'blobs'
 const VERSION = 1
@@ -22,13 +24,22 @@ function open(): Promise<IDBDatabase> {
   return dbPromise
 }
 
-export async function putBlob(key: string, blob: Blob): Promise<void> {
+export async function putBlob(key: string, blob: Blob, mime?: string): Promise<void> {
   const db = await open()
+  // Без корректного типа PDF и офисные файлы не открываются в просмотрщике,
+  // поэтому при сохранении MIME восстанавливается по расширению.
+  const type = mime || blob.type || mimeByName(key)
+  const payload = blob.type === type ? blob : new Blob([blob], { type })
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put(blob, key)
+    tx.objectStore(STORE).put(payload, key)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () =>
+      reject(
+        tx.error ??
+          new Error('Не удалось сохранить файл: в браузере закончилось место для хранилища'),
+      )
   })
 }
 
@@ -60,9 +71,18 @@ export async function blobUrl(key: string): Promise<string | null> {
   if (cached) return cached
   const blob = await getBlob(key)
   if (!blob) return null
-  const url = URL.createObjectURL(blob)
+  // Файл мог быть сохранён без типа (старые записи) — чиним на лету
+  const expected = mimeByName(key)
+  const typed =
+    blob.type && blob.type !== 'application/octet-stream' ? blob : new Blob([blob], { type: expected })
+  const url = URL.createObjectURL(typed)
   urlCache.set(key, url)
   return url
+}
+
+/** Есть ли файл в локальном хранилище — просмотрщик отличает «нет файла» от «файл потерян» */
+export async function hasBlob(key: string): Promise<boolean> {
+  return (await getBlob(key)) !== null
 }
 
 export function revokeAll() {

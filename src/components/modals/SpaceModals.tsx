@@ -160,11 +160,6 @@ export function SpaceModal({ open, onClose }: { open: boolean; onClose: () => vo
       }
     >
       <div className="space-y-4">
-        <p className="rounded-soft bg-brand-soft px-3.5 py-2.5 text-[12.5px] leading-snug text-brand">
-          В своём пространстве вы — преподаватель курса, независимо от роли аккаунта: добавляете
-          материалы и задания, приглашаете участников и настраиваете, что им доступно. В чужих
-          курсах права выдаёт их владелец.
-        </p>
         <label className="block">
           <span className="mb-1.5 block text-[13px] font-medium text-ink-2">Название</span>
           <input
@@ -313,60 +308,6 @@ export function ShareModal({ open, onClose }: { open: boolean; onClose: () => vo
           </div>
         </div>
 
-        {isOwner && (
-          <div className="rounded-card border border-line">
-            <p className="border-b border-line px-3.5 py-2.5 text-[13px] font-semibold text-ink">
-              Что доступно ученикам
-            </p>
-            <ul className="divide-y divide-line">
-              <SpaceToggle
-                spaceId={space.id}
-                field="join_open"
-                value={space.join_open}
-                title="Приём по коду"
-                hint="Новые участники могут войти по коду приглашения"
-              />
-              <SpaceToggle
-                spaceId={space.id}
-                field="student_upload"
-                value={space.student_upload}
-                title="Ученики добавляют материалы"
-                hint="Иначе загружать и править материалы могут только вы и редакторы"
-              />
-              <SpaceToggle
-                spaceId={space.id}
-                field="show_assignments"
-                value={space.show_assignments}
-                title="Раздел «Задания»"
-                hint="Скрыть задания у учеников, пока курс не готов"
-              />
-              <SpaceToggle
-                spaceId={space.id}
-                field="show_calendar"
-                value={space.show_calendar}
-                title="Раздел «Календарь»"
-                hint="Календарь дедлайнов у учеников"
-              />
-              <SpaceToggle
-                spaceId={space.id}
-                field="show_members"
-                value={space.show_members}
-                title="Список участников"
-                hint="Ученики видят, кто ещё состоит в пространстве"
-              />
-              <SpaceToggle
-                spaceId={space.id}
-                field="is_locked"
-                value={space.is_locked}
-                title="Закрыть пространство"
-                hint="Ученики не видят содержимое, пока вы не откроете его снова"
-                danger
-              />
-            </ul>
-          </div>
-        )}
-
-        {(isOwner || space.show_members) && (
         <div>
           <p className="mb-2 text-[13px] font-semibold text-ink">Участники ({space.members.length})</p>
           <ul className="divide-y divide-line overflow-hidden rounded-card border border-line">
@@ -422,7 +363,6 @@ export function ShareModal({ open, onClose }: { open: boolean; onClose: () => vo
             ))}
           </ul>
         </div>
-        )}
 
         {isOwner && (
           <button
@@ -445,81 +385,5 @@ export function ShareModal({ open, onClose }: { open: boolean; onClose: () => vo
         )}
       </div>
     </Modal>
-  )
-}
-
-
-/* --------------------- тумблер настройки пространства --------------------- */
-
-function SpaceToggle({
-  spaceId,
-  field,
-  value,
-  title,
-  hint,
-  danger,
-}: {
-  spaceId: string
-  field:
-    | 'join_open'
-    | 'is_locked'
-    | 'student_upload'
-    | 'show_assignments'
-    | 'show_calendar'
-    | 'show_members'
-  value: boolean
-  title: string
-  hint: string
-  danger?: boolean
-}) {
-  const { refreshSpaces } = useApp()
-  const toast = useToast()
-  const [busy, setBusy] = useState(false)
-  const [on, setOn] = useState(value)
-
-  useEffect(() => setOn(value), [value])
-
-  async function toggle() {
-    const next = !on
-    setOn(next)
-    setBusy(true)
-    try {
-      await db.updateSpace(spaceId, { [field]: next })
-      await refreshSpaces()
-    } catch (e) {
-      setOn(!next)
-      toast.error(e)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <li className="flex items-center gap-3 bg-surface px-3.5 py-2.5">
-      <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-medium text-ink">{title}</p>
-        <p className="text-[11.5px] leading-snug text-ink-3">{hint}</p>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-label={title}
-        disabled={busy}
-        onClick={toggle}
-        className={cx(
-          'relative h-[24px] w-[42px] shrink-0 rounded-full border transition disabled:opacity-60',
-          on ? 'border-transparent' : 'border-line bg-surface-2',
-        )}
-        style={on ? { background: danger ? 'var(--cf-red-acc)' : 'rgb(var(--cf-brand))' } : undefined}
-      >
-        <span
-          className={cx(
-            'absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white shadow transition-all',
-            on ? 'left-[21px]' : 'left-[2px]',
-          )}
-        />
-      </button>
-    </li>
   )
 }

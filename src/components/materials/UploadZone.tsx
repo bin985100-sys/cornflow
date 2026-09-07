@@ -40,6 +40,9 @@ export function useUploader({ spaceId, folderId = null, tagIds = [], color, onDo
       setItems((prev) => [...prev, ...queued])
       setBusy(true)
 
+      let ok = 0
+      const failed: string[] = []
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         const item = queued[i]
@@ -57,24 +60,31 @@ export function useUploader({ spaceId, folderId = null, tagIds = [], color, onDo
             tagIds,
             ...result,
           })
+          ok++
           setItems((prev) =>
             prev.map((x) => (x.id === item.id ? { ...x, status: 'done', progress: 100 } : x)),
           )
         } catch (e) {
+          const message = e instanceof Error ? e.message : 'Ошибка загрузки'
+          failed.push(message)
           setItems((prev) =>
-            prev.map((x) =>
-              x.id === item.id
-                ? { ...x, status: 'error', error: e instanceof Error ? e.message : 'Ошибка загрузки' }
-                : x,
-            ),
+            prev.map((x) => (x.id === item.id ? { ...x, status: 'error', error: message } : x)),
           )
         }
       }
 
       setBusy(false)
       onDone?.()
-      const ok = queued.length
-      toast.success(ok === 1 ? 'Файл загружен' : `Загружено файлов: ${ok}`)
+
+      // Честный итог: раньше «загружено» показывалось даже когда всё упало
+      if (ok) toast.success(ok === 1 ? 'Файл загружен' : `Загружено файлов: ${ok}`)
+      if (failed.length) {
+        toast.error(
+          failed.length === 1
+            ? failed[0]
+            : `Не загрузились файлы: ${failed.length}. ${failed[0]}`,
+        )
+      }
     },
     [spaceId, folderId, tagIds, color, onDone, toast],
   )

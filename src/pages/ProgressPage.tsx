@@ -11,13 +11,13 @@ type Row = Progress & { user: Pick<User, 'id' | 'name' | 'avatar'> | null }
 
 /** Экран учителя: кто открыл материалы и кто сдал задания. */
 export function ProgressPage() {
-  const { space, materials, assignments, canManage } = useApp()
+  const { space, materials, assignments } = useApp()
   const toast = useToast()
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!space || !canManage) return
+    if (!space) return
     let alive = true
     setLoading(true)
     db.listSpaceProgress(space.id)
@@ -27,26 +27,10 @@ export function ProgressPage() {
     return () => {
       alive = false
     }
-  }, [space, materials, canManage, toast])
+  }, [space, materials, toast])
 
-  if (!canManage) {
-    return (
-      <div className="mx-auto max-w-[1400px] px-5 py-6 lg:px-8">
-        <EmptyState
-          art="search"
-          title="Раздел доступен преподавателю"
-          description="Прогресс учеников видит владелец пространства и его редакторы."
-        />
-      </div>
-    )
-  }
-
-  // ученик курса — тот, у кого в этом пространстве только просмотр (роль аккаунта тут ни при чём)
   const students = useMemo(
-    () =>
-      (space?.members ?? []).filter(
-        (m) => m.permission !== 'edit' && m.id !== space?.owner_id,
-      ),
+    () => (space?.members ?? []).filter((m) => m.role === 'student'),
     [space],
   )
 

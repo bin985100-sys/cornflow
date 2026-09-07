@@ -21,6 +21,7 @@ import {
   PlayCircle,
   Search,
   ShieldCheck,
+  Sparkles,
   Star,
   Tag as TagIcon,
   Users,
@@ -30,7 +31,6 @@ import {
 import { useAuth } from '@/context/AuthContext'
 import { cx } from '@/lib/utils'
 import { Logo } from '@/components/layout/Logo'
-import { FolderCard } from '@/components/landing/FolderCard'
 import { Reveal } from '@/components/landing/Reveal'
 import { VideoPanel } from '@/components/landing/VideoPanel'
 
@@ -69,7 +69,7 @@ export function LandingPage() {
       {/* ============================= навигация ============================= */}
       <header
         className={cx(
-          'fixed inset-x-0 top-0 z-50 transition-all duration-300',
+          'fixed inset-x-0 top-0 z-[60] transition-all duration-300',
           scrolled ? 'border-b border-black/[0.07] bg-white/85 backdrop-blur-xl' : 'border-b border-transparent',
         )}
       >
@@ -181,8 +181,15 @@ export function LandingPage() {
         />
 
         <div className="relative mx-auto w-full max-w-[1240px] px-5 pb-24 pt-32 lg:px-8">
+          <Reveal>
+            <span className="inline-flex items-start gap-2 rounded-full border border-white/20 bg-white/[0.07] px-3.5 py-1.5 text-[11.5px] font-medium leading-snug text-white/90 backdrop-blur sm:items-center sm:text-[12.5px]">
+              <Sparkles size={13} className="mt-[2px] shrink-0 text-[#7AA2FF] sm:mt-0" />
+              Учебные материалы, которые наконец-то не теряются
+            </span>
+          </Reveal>
+
           <Reveal delay={90}>
-            <h1 className="max-w-[15ch] text-[clamp(2.15rem,7vw,5.4rem)] font-extrabold leading-[1.02] tracking-[-0.04em] text-white">
+            <h1 className="mt-6 max-w-[15ch] text-[clamp(2.15rem,7vw,5.4rem)] font-extrabold leading-[1.02] tracking-[-0.04em] text-white">
               Всё&nbsp;для&nbsp;учёбы&nbsp;—
               <br />в одном потоке
             </h1>
@@ -332,16 +339,25 @@ export function LandingPage() {
             </h2>
           </Reveal>
 
-          <div className="mt-14 grid gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map((f, i) => (
-              <Reveal key={f.title} delay={i * 60} className="h-full">
-                <FolderCard
-                  icon={f.icon}
-                  title={f.title}
-                  text={f.text}
-                  accent={f.accent}
-                  deep={f.deep}
-                />
+              <Reveal key={f.title} delay={i * 60}>
+                <article
+                  className="group h-full overflow-hidden rounded-[20px] border shadow-[0_1px_2px_rgba(16,24,40,.04),0_8px_24px_-12px_rgba(16,24,40,.12)] transition-[transform,box-shadow] duration-300 hover:-translate-y-1 hover:shadow-[0_2px_4px_rgba(16,24,40,.05),0_18px_40px_-16px_rgba(16,24,40,.22)]"
+                  style={{ background: f.bg, borderColor: `color-mix(in srgb, ${f.accent} 20%, transparent)` }}
+                >
+                  <div className="h-[7px] w-full" style={{ background: f.accent }} />
+                  <div className="p-5">
+                    <span
+                      className="flex h-10 w-10 items-center justify-center rounded-[12px]"
+                      style={{ background: `color-mix(in srgb, ${f.accent} 15%, transparent)`, color: f.accent }}
+                    >
+                      <f.icon size={19} />
+                    </span>
+                    <h3 className="mt-3.5 text-[16px] font-semibold" style={{ color: INK }}>{f.title}</h3>
+                    <p className="mt-1.5 text-[13.5px] leading-relaxed text-black/65">{f.text}</p>
+                  </div>
+                </article>
               </Reveal>
             ))}
           </div>
@@ -543,16 +559,8 @@ export function LandingPage() {
       </section>
 
       {/* ================================ FAQ =============================== */}
-      <section id="faq" className="relative overflow-hidden bg-white py-24 lg:py-32">
-        <VideoPanel
-          src="/media/faq.mp4"
-          poster="/media/faq-poster.jpg"
-          overlay={{
-            background:
-              'linear-gradient(180deg, rgba(255,255,255,.93) 0%, rgba(255,255,255,.88) 45%, rgba(255,255,255,.95) 100%)',
-          }}
-        />
-        <div className="relative mx-auto max-w-[820px] px-5 lg:px-8">
+      <section id="faq" className="bg-white py-24 lg:py-32">
+        <div className="mx-auto max-w-[820px] px-5 lg:px-8">
           <Reveal>
             <p className="text-[13px] font-semibold uppercase tracking-[0.14em]" style={{ color: BLUE }}>
               Вопросы
@@ -666,7 +674,6 @@ const FEATURES = [
     text: 'Сетка или список. Каждая карточка — материал или папка: цветная плашка, тип, превью текста, теги, автор и дата.',
     bg: '#EAF1FD',
     accent: '#3B7DE5',
-    deep: '#1B4BA6',
   },
   {
     icon: CloudUpload,
@@ -674,7 +681,6 @@ const FEATURES = [
     text: 'Бросьте файлы в любое место окна. Несколько сразу, превью изображений, прогресс по каждому файлу.',
     bg: '#EAF6EE',
     accent: '#3A9E5D',
-    deep: '#1D6A3D',
   },
   {
     icon: Notebook,
@@ -682,7 +688,6 @@ const FEATURES = [
     text: 'Заголовки, списки, чек-листы, выделение, цитаты и ссылки. Автосохранение — без кнопки «сохранить».',
     bg: '#FEF9E7',
     accent: '#E5A83D',
-    deep: '#A96A11',
   },
   {
     icon: ClipboardList,
@@ -690,7 +695,6 @@ const FEATURES = [
     text: 'Дедлайн, описание, прикреплённые материалы. Ученик сдаёт работу с комментарием, преподаватель ставит оценку.',
     bg: '#FDECEC',
     accent: '#E5484D',
-    deep: '#A3232A',
   },
   {
     icon: Eye,
@@ -698,7 +702,6 @@ const FEATURES = [
     text: 'PDF, презентации, изображения, видео и аудио открываются прямо в приложении — скачивать необязательно.',
     bg: '#F1ECFD',
     accent: '#7B5EE5',
-    deep: '#4931A6',
   },
   {
     icon: Star,
@@ -706,7 +709,6 @@ const FEATURES = [
     text: 'Отмечайте важное звёздочкой и статусом «Изучено». Преподаватель видит, кто открыл материал.',
     bg: '#FEF9E7',
     accent: '#E5A83D',
-    deep: '#A96A11',
   },
   {
     icon: CalendarDays,
@@ -714,7 +716,6 @@ const FEATURES = [
     text: 'Месяц и неделя, чипы событий, панель выбранного дня. Задания и личные задачи в одной сетке.',
     bg: '#EAF1FD',
     accent: '#3B7DE5',
-    deep: '#1B4BA6',
   },
   {
     icon: KeyRound,
@@ -722,7 +723,6 @@ const FEATURES = [
     text: 'Шестизначный код или ссылка-приглашение. Права выдаются отдельно: только просмотр или редактирование.',
     bg: '#EAF6EE',
     accent: '#3A9E5D',
-    deep: '#1D6A3D',
   },
   {
     icon: Moon,
@@ -730,7 +730,6 @@ const FEATURES = [
     text: 'Работает на ноутбуке, планшете и телефоне. Светлая и тёмная темы переключаются одним тумблером.',
     bg: '#F1ECFD',
     accent: '#7B5EE5',
-    deep: '#4931A6',
   },
 ]
 
@@ -755,7 +754,6 @@ const ROLES = [
     title: 'Учитель',
     subtitle: 'Ведёт курс и видит картину целиком',
     accent: '#3B7DE5',
-    deep: '#1B4BA6',
     bg: '#EAF1FD',
     items: [
       'Создаёт пространства и папки любой вложенности',
@@ -771,7 +769,6 @@ const ROLES = [
     title: 'Ученик',
     subtitle: 'Учится, ничего не теряя',
     accent: '#7B5EE5',
-    deep: '#4931A6',
     bg: '#F1ECFD',
     items: [
       'Присоединяется к пространству по коду или ссылке',
