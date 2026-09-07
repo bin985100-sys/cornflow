@@ -31,6 +31,8 @@ export function AssignmentModal({
   const [time, setTime] = useState('18:00')
   const [attachments, setAttachments] = useState<string[]>([])
   const [allowLate, setAllowLate] = useState(true)
+  const [lessonId, setLessonId] = useState('')
+  const gbLessons = useGradebook()
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -45,6 +47,7 @@ export function AssignmentModal({
     )
     setAttachments(editing?.attachments ?? [])
     setAllowLate(editing?.allow_late ?? true)
+    setLessonId(editing?.lesson_id ?? '')
   }, [open, editing])
 
   async function save() {
@@ -58,6 +61,7 @@ export function AssignmentModal({
           description: description.trim() || null,
           due_date: due,
           allow_late: allowLate,
+          lesson_id: lessonId || null,
           attachments,
         })
         toast.success('Задание обновлено')
@@ -68,6 +72,7 @@ export function AssignmentModal({
           description: description.trim() || null,
           due_date: due,
           allow_late: allowLate,
+          lesson_id: lessonId || null,
           attachments,
         })
         toast.success('Задание создано')
@@ -173,6 +178,27 @@ export function AssignmentModal({
             </span>
           </span>
         </label>
+
+        {!!gbLessons.periodLessons.length && (
+          <label className="block">
+            <span className="mb-1.5 block text-[13px] font-medium text-ink-2">Занятие</span>
+            <select
+              className="cf-input w-full"
+              value={lessonId}
+              onChange={(e) => setLessonId(e.target.value)}
+            >
+              <option value="">Без привязки к занятию</option>
+              {gbLessons.periodLessons.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.date.slice(0, 10)} · {l.title}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[11.5px] text-ink-3">
+              Задание появится в карточке урока, а ученик увидит его в дневнике под занятием
+            </span>
+          </label>
+        )}
 
         <div>
           <span className="mb-1.5 block text-[13px] font-medium text-ink-2">

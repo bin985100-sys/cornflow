@@ -109,6 +109,8 @@ export interface Assignment {
   due_date: string | null
   /** принимать ли работы после дедлайна */
   allow_late: boolean
+  /** Урок, к которому прикреплено задание */
+  lesson_id: string | null
   /** id материалов, прикреплённых к заданию */
   attachments: string[]
   author_id: string
@@ -348,13 +350,116 @@ export interface GradePeriod {
 }
 
 /** Категория работ с собственным весом: контрольная, домашняя, устный ответ… */
+/**
+ * Тип работы и занятия: SA, FA, домашняя, устный ответ… Всё настраивается —
+ * имя, короткий код, цвет, вес в среднем балле и важность по умолчанию.
+ */
 export interface GradeCategory {
   id: string
   space_id: string
   name: string
+  /** Короткий код на чипе: SA, FA, HW. Пусто — показываем имя */
+  code: string | null
   weight: number
   color: CardColor
+  /** Важность по умолчанию для занятий и работ этого типа */
+  default_priority_id: string | null
+  /** Учитывать работы этого типа в среднем балле */
+  counts_toward_grade: boolean
+  position: number
   created_at: string
+}
+
+/* --------------------- настраиваемые справочники ------------------------- */
+
+/**
+ * Статус занятия. Список задаёт учитель: «Запланировано», «Проведено»,
+ * «Отменено» — любые свои названия, цвета и порядок.
+ */
+export interface LessonStatus {
+  id: string
+  space_id: string
+  name: string
+  color: CardColor
+  /** Считать занятие состоявшимся — влияет на счётчики и посещаемость */
+  is_held: boolean
+  /** Ставить этот статус новым занятиям */
+  is_default: boolean
+  position: number
+  created_at: string
+}
+
+/**
+ * Уровень важности. Тоже полностью настраиваемый: «Обычная», «Высокая»,
+ * «Критическая» — сколько угодно уровней со своим весом внимания.
+ */
+export interface LessonPriority {
+  id: string
+  space_id: string
+  name: string
+  color: CardColor
+  /** Чем больше, тем выше в списке важности */
+  rank: number
+  is_default: boolean
+  position: number
+  created_at: string
+}
+
+/* ------------------------------- занятия --------------------------------- */
+
+/**
+ * Урок. К уроку привязываются задания и работы журнала; тип, статус и
+ * важность берутся из справочников пространства, поэтому ничего не зашито.
+ */
+export interface Lesson {
+  id: string
+  space_id: string
+  period_id: string | null
+  category_id: string | null
+  status_id: string | null
+  priority_id: string | null
+  title: string
+  topic: string | null
+  date: string
+  /** Время начала, HH:MM; null — время не задано */
+  starts_at: string | null
+  duration_min: number | null
+  /** Домашнее задание текстом */
+  homework: string | null
+  /** Заметка учителя по занятию */
+  notes: string | null
+  position: number
+  created_at: string
+}
+
+/* -------------------- наборы пространств (один код) ---------------------- */
+
+/**
+ * Набор пространств: администратор собирает несколько пространств и раздаёт
+ * один код. Ученик входит по нему сразу во все пространства набора.
+ * Чужое пространство добавляет только тот, кто вправе его редактировать.
+ */
+export interface SpaceBundle {
+  id: string
+  name: string
+  description: string | null
+  code: string
+  owner_id: string
+  /** С какими правами вступают вошедшие по коду */
+  permission: Permission
+  created_at: string
+}
+
+export interface BundleSpace {
+  bundle_id: string
+  space_id: string
+  added_by: string | null
+  added_at: string
+}
+
+export interface SpaceBundleView extends SpaceBundle {
+  spaces: Array<Pick<Space, 'id' | 'name' | 'color'> & { owner_id: string; is_mine: boolean }>
+  is_owner: boolean
 }
 
 /** Колонка журнала — конкретная работа */
@@ -363,6 +468,8 @@ export interface GradeItem {
   space_id: string
   period_id: string | null
   category_id: string | null
+  /** Урок, к которому относится работа */
+  lesson_id: string | null
   /** Если работа создана из задания — оценки переносятся автоматически */
   assignment_id: string | null
   title: string
@@ -435,6 +542,9 @@ export interface GradebookSnapshot {
   grades: Grade[]
   criteria: GradeCriterion[]
   criterionScores: CriterionScore[]
+  lessons: Lesson[]
+  lessonStatuses: LessonStatus[]
+  lessonPriorities: LessonPriority[]
   attendance: Attendance[]
   students: Array<Pick<User, 'id' | 'name' | 'avatar' | 'role'>>
 }

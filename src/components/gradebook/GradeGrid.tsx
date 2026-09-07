@@ -161,7 +161,7 @@ export function GradeGrid({ gb, onCreateItem, onEditItem }: Props) {
     const header = [
       'Ученик',
       ...items.map((i) => `${i.title} (${formatDate(i.date)})`),
-      'Средний %',
+      'Средний балл',
       'Итог',
     ]
     const rows: Array<Array<string | number | null>> = [header]
@@ -173,7 +173,7 @@ export function GradeGrid({ gb, onCreateItem, onEditItem }: Props) {
           const g = gradeAt(i.id, s.id)
           return g ? gradeLabel(g, i, scaleFor(i)) : ''
         }),
-        agg.percent === null ? '' : Math.round(agg.percent),
+        agg.average === null ? '' : trimNumber(Math.round(agg.average * 100) / 100),
         agg.level?.label ?? '',
       ])
     }
@@ -316,8 +316,8 @@ export function GradeGrid({ gb, onCreateItem, onEditItem }: Props) {
                   </th>
                 )
               })}
-              <th className="min-w-[92px] border-b border-l border-line bg-surface px-2 py-3 text-[12px] font-semibold">
-                Средний
+              <th className="min-w-[104px] border-b border-l border-line bg-surface px-2 py-3 text-[12px] font-semibold">
+                Средний балл
               </th>
               <th className="min-w-[80px] border-b border-line bg-surface px-2 py-3 text-[12px] font-semibold">
                 Итог
@@ -452,16 +452,14 @@ export function GradeGrid({ gb, onCreateItem, onEditItem }: Props) {
                   })}
 
                   <td className="border-b border-l border-line px-2 py-2 text-center text-[13px] font-semibold">
-                    {agg.percent === null ? (
+                    {agg.average === null ? (
                       <span className="text-ink-3">—</span>
                     ) : (
-                      <span>
-                        {Math.round(agg.percent)}%
-                        {agg.average !== null && (
-                          <span className="ml-1 text-[11px] font-medium text-ink-3">
-                            {trimNumber(Math.round(agg.average * 100) / 100)}
-                          </span>
-                        )}
+                      <span title={`${Math.round(agg.percent ?? 0)}% · по ${agg.counted} работам`}>
+                        {trimNumber(Math.round(agg.average * 100) / 100)}
+                        <span className="ml-1 text-[11px] font-medium text-ink-3">
+                          из {trimNumber(gb.defaultScale.max_value)}
+                        </span>
                       </span>
                     )}
                   </td>
@@ -614,8 +612,12 @@ function LevelPicker({
   )
 }
 
-/** Подробный редактор клетки: балл или критерии, отметка и комментарий */
-function CellEditor({
+/**
+ * Подробный редактор клетки: балл или критерии, отметка и комментарий.
+ * Используется и в журнале, и в дневнике — оценку можно поправить в любой
+ * момент, в том числе у уже проверенной работы.
+ */
+export function CellEditor({
   gb,
   item,
   studentId,

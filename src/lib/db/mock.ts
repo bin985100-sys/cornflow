@@ -12,6 +12,11 @@ import type {
   GradePeriod,
   GradeScale,
   GradebookSnapshot,
+  Lesson,
+  LessonPriority,
+  LessonStatus,
+  SpaceBundle,
+  SpaceBundleView,
   Material,
   MaterialTag,
   MaterialView,
@@ -37,13 +42,20 @@ import type {
   QuizView,
 } from '../types'
 import { colorFromString, inviteCode, nowIso, uid } from '../utils'
-import { DEFAULT_CATEGORIES, defaultPeriods, presetByKey } from '../grading'
+import {
+  DEFAULT_CATEGORIES,
+  DEFAULT_LESSON_PRIORITIES,
+  DEFAULT_LESSON_STATUSES,
+  defaultPeriods,
+  presetByKey,
+} from '../grading'
 import { blobUrl, deleteBlob, putBlob } from './idb'
 import type {
   ChangeEvent,
   CreateAssignmentInput,
   CreateFolderInput,
   CreateGradeItemInput,
+  CreateLessonInput,
   CreateMaterialInput,
   CreateSpaceInput,
   DataProvider,
@@ -84,6 +96,11 @@ interface MockDB {
   grades: Grade[]
   grade_criteria: GradeCriterion[]
   criterion_scores: CriterionScore[]
+  lessons: Lesson[]
+  lesson_statuses: LessonStatus[]
+  lesson_priorities: LessonPriority[]
+  space_bundles: SpaceBundle[]
+  bundle_spaces: Array<{ bundle_id: string; space_id: string; added_by: string | null; added_at: string }>
   attendance: Attendance[]
 }
 
@@ -113,6 +130,11 @@ function emptyDb(): MockDB {
     grades: [],
     grade_criteria: [],
     criterion_scores: [],
+    lessons: [],
+    lesson_statuses: [],
+    lesson_priorities: [],
+    space_bundles: [],
+    bundle_spaces: [],
     attendance: [],
   }
 }
@@ -443,22 +465,48 @@ export class MockProvider implements DataProvider {
     this.persist({ table: 'spaces' })
   }
 
+  /**
+   * Один код — и пространство, и набор пространств. Сначала ищем обычный
+   * код приглашения, затем код набора: по нему вступаем сразу во все
+   * пространства набора, в том числе чужие.
+   */
   async joinSpaceByCode(code: string): Promise<Space> {
     const me = this.me()
     const normalized = code.trim().toUpperCase()
-    const space = this.db.spaces.find((s) => s.invite_code.toUpperCase() === normalized)
-    if (!space) throw new Error('Пространство с таким кодом не найдено')
-    const exists = this.db.space_members.find((m) => m.space_id === space.id && m.user_id === me.id)
-    if (!exists) {
+
+    const join = (space: Space, permission: Permission) => {
+      const exists = this.db.space_members.find(
+        (m) => m.space_id === space.id && m.user_id === me.id,
+      )
+      if (exists) return
       this.db.space_members.push({
         space_id: space.id,
         user_id: me.id,
-        permission: me.role === 'teacher' ? 'edit' : 'view',
+        permission,
         joined_at: nowIso(),
       })
-      this.persist({ table: 'spaces', spaceId: space.id })
     }
-    return space
+
+    const space = this.db.spaces.find((s) => s.invite_code.toUpperCase() === normalized)
+    if (space) {
+      join(space, me.role === 'teacher' ? 'edit' : 'view')
+      this.persist({ table: 'spaces', spaceId: space.id })
+      return space
+    }
+
+    const bundle = this.db.space_bundles.find((b) => b.code.toUpperCase() === normalized)
+    if (bundle) {
+      const spaces = this.db.bundle_spaces
+        .filter((bs) => bs.bundle_id === bundle.id)
+        .map((bs) => this.db.spaces.find((sp) => sp.id === bs.space_id))
+        .filter((sp): sp is Space => !!sp)
+      if (!spaces.length) throw new Error('В этом наборе пока нет пространств')
+      spaces.forEach((sp) => join(sp, bundle.permission))
+      this.persist({ table: 'spaces' })
+      return spaces[0]
+    }
+
+    throw new Error('Пространство или набор с таким кодом не найдены')
   }
 
   async setMemberPermission(spaceId: string, userId: string, permission: Permission): Promise<void> {
@@ -1031,6 +1079,7 @@ export class MockProvider implements DataProvider {
       title: input.title.trim(),
       description: input.description ?? null,
       due_date: input.due_date ?? null,
+      lesson_id: (input as { lesson_id?: string | null }).lesson_id ?? null,
       allow_late: input.allow_late ?? true,
       attachments: input.attachments ?? [],
       author_id: me.id,
@@ -1167,6 +1216,15 @@ export class MockProvider implements DataProvider {
       criterionScores: this.db.criterion_scores.filter((cs) =>
         this.db.grade_criteria.some((c) => c.id === cs.criterion_id && c.space_id === spaceId),
       ),
+      lessons: this.db.lessons
+        .filter((l) => l.space_id === spaceId)
+        .sort((a, b) => a.date.localeCompare(b.date) || a.position - b.position),
+      lessonStatuses: this.db.lesson_statuses
+        .filter((x) => x.space_id === spaceId)
+        .sort((a, b) => a.position - b.position),
+      lessonPriorities: this.db.lesson_priorities
+        .filter((x) => x.space_id === spaceId)
+        .sort((a, b) => b.rank - a.rank),
       attendance: this.db.attendance.filter((x) => x.space_id === spaceId),
       students: this.spaceStudents(spaceId),
     }
@@ -1191,10 +1249,44 @@ export class MockProvider implements DataProvider {
       })
       touched = true
     }
-    if (!this.db.grade_categories.some((x) => x.space_id === spaceId)) {
-      DEFAULT_CATEGORIES.forEach((c) =>
-        this.db.grade_categories.push({ ...c, id: uid('cat'), space_id: spaceId, created_at: nowIso() }),
+    // Справочники занятий заводим раньше категорий — категории на них ссылаются
+    if (!this.db.lesson_statuses.some((x) => x.space_id === spaceId)) {
+      DEFAULT_LESSON_STATUSES.forEach((st, i) =>
+        this.db.lesson_statuses.push({
+          ...st,
+          id: uid('lst'),
+          space_id: spaceId,
+          position: i,
+          created_at: nowIso(),
+        }),
       )
+      touched = true
+    }
+    if (!this.db.lesson_priorities.some((x) => x.space_id === spaceId)) {
+      DEFAULT_LESSON_PRIORITIES.forEach((pr, i) =>
+        this.db.lesson_priorities.push({
+          ...pr,
+          id: uid('lpr'),
+          space_id: spaceId,
+          position: i,
+          created_at: nowIso(),
+        }),
+      )
+      touched = true
+    }
+    if (!this.db.grade_categories.some((x) => x.space_id === spaceId)) {
+      const priorities = this.db.lesson_priorities.filter((x) => x.space_id === spaceId)
+      DEFAULT_CATEGORIES.forEach((c, i) => {
+        const { priority, ...rest } = c
+        this.db.grade_categories.push({
+          ...rest,
+          id: uid('cat'),
+          space_id: spaceId,
+          default_priority_id: priorities.find((p) => p.name === priority)?.id ?? null,
+          position: i,
+          created_at: nowIso(),
+        })
+      })
       touched = true
     }
     if (!this.db.grade_periods.some((x) => x.space_id === spaceId)) {
@@ -1322,6 +1414,7 @@ export class MockProvider implements DataProvider {
       space_id: input.space_id,
       period_id: input.period_id ?? null,
       category_id: input.category_id ?? null,
+      lesson_id: input.lesson_id ?? null,
       assignment_id: input.assignment_id ?? null,
       title: input.title.trim() || 'Работа',
       date: input.date,
@@ -1472,6 +1565,272 @@ export class MockProvider implements DataProvider {
     if (item) this.assertSpaceAccess(item.space_id, true)
     this.db.grades = this.db.grades.filter((g) => !(g.item_id === itemId && g.student_id === studentId))
     this.persist({ table: 'gradebook', spaceId: item?.space_id ?? null })
+  }
+
+  /* ------------------------------ уроки ---------------------------------- */
+
+  async createLesson(input: CreateLessonInput): Promise<Lesson> {
+    this.assertSpaceAccess(input.space_id, true)
+    const category = input.category_id
+      ? this.db.grade_categories.find((c) => c.id === input.category_id)
+      : null
+    const lesson: Lesson = {
+      id: uid('lsn'),
+      space_id: input.space_id,
+      period_id: input.period_id ?? null,
+      category_id: input.category_id ?? null,
+      status_id:
+        input.status_id ??
+        this.db.lesson_statuses.find((x) => x.space_id === input.space_id && x.is_default)?.id ??
+        null,
+      // Важность берём у типа занятия, а если её там нет — из справочника
+      priority_id:
+        input.priority_id ??
+        category?.default_priority_id ??
+        this.db.lesson_priorities.find((x) => x.space_id === input.space_id && x.is_default)?.id ??
+        null,
+      title: input.title.trim() || 'Занятие',
+      topic: input.topic ?? null,
+      date: input.date,
+      starts_at: input.starts_at ?? null,
+      duration_min: input.duration_min ?? null,
+      homework: input.homework ?? null,
+      notes: input.notes ?? null,
+      position: this.db.lessons.filter((l) => l.space_id === input.space_id && l.date === input.date)
+        .length,
+      created_at: nowIso(),
+    }
+    this.db.lessons.push(lesson)
+    this.persist({ table: 'gradebook', spaceId: lesson.space_id })
+    return lesson
+  }
+
+  async updateLesson(id: string, patch: Partial<Lesson>): Promise<Lesson> {
+    const lesson = this.db.lessons.find((l) => l.id === id)
+    if (!lesson) throw new Error('Занятие не найдено')
+    this.assertSpaceAccess(lesson.space_id, true)
+    Object.assign(lesson, patch)
+    this.persist({ table: 'gradebook', spaceId: lesson.space_id })
+    return lesson
+  }
+
+  async deleteLesson(id: string): Promise<void> {
+    const lesson = this.db.lessons.find((l) => l.id === id)
+    if (!lesson) return
+    this.assertSpaceAccess(lesson.space_id, true)
+    this.db.lessons = this.db.lessons.filter((l) => l.id !== id)
+    // Работы и задания не удаляем — просто отвязываем от занятия
+    this.db.grade_items.forEach((i) => {
+      if (i.lesson_id === id) i.lesson_id = null
+    })
+    this.db.assignments.forEach((a) => {
+      if (a.lesson_id === id) a.lesson_id = null
+    })
+    this.persist({ table: 'gradebook', spaceId: lesson.space_id })
+  }
+
+  /* --------------------- справочники занятий ----------------------------- */
+
+  async createLessonStatus(input: Omit<LessonStatus, 'id' | 'created_at'>): Promise<LessonStatus> {
+    this.assertSpaceAccess(input.space_id, true)
+    if (input.is_default) {
+      this.db.lesson_statuses.forEach((x) => {
+        if (x.space_id === input.space_id) x.is_default = false
+      })
+    }
+    const row: LessonStatus = { ...input, id: uid('lst'), created_at: nowIso() }
+    this.db.lesson_statuses.push(row)
+    this.persist({ table: 'gradebook', spaceId: row.space_id })
+    return row
+  }
+
+  async updateLessonStatus(id: string, patch: Partial<LessonStatus>): Promise<LessonStatus> {
+    const row = this.db.lesson_statuses.find((x) => x.id === id)
+    if (!row) throw new Error('Статус не найден')
+    this.assertSpaceAccess(row.space_id, true)
+    if (patch.is_default) {
+      this.db.lesson_statuses.forEach((x) => {
+        if (x.space_id === row.space_id) x.is_default = false
+      })
+    }
+    Object.assign(row, patch)
+    this.persist({ table: 'gradebook', spaceId: row.space_id })
+    return row
+  }
+
+  async deleteLessonStatus(id: string): Promise<void> {
+    const row = this.db.lesson_statuses.find((x) => x.id === id)
+    if (!row) return
+    this.assertSpaceAccess(row.space_id, true)
+    this.db.lesson_statuses = this.db.lesson_statuses.filter((x) => x.id !== id)
+    this.db.lessons.forEach((l) => {
+      if (l.status_id === id) l.status_id = null
+    })
+    this.persist({ table: 'gradebook', spaceId: row.space_id })
+  }
+
+  async createLessonPriority(
+    input: Omit<LessonPriority, 'id' | 'created_at'>,
+  ): Promise<LessonPriority> {
+    this.assertSpaceAccess(input.space_id, true)
+    if (input.is_default) {
+      this.db.lesson_priorities.forEach((x) => {
+        if (x.space_id === input.space_id) x.is_default = false
+      })
+    }
+    const row: LessonPriority = { ...input, id: uid('lpr'), created_at: nowIso() }
+    this.db.lesson_priorities.push(row)
+    this.persist({ table: 'gradebook', spaceId: row.space_id })
+    return row
+  }
+
+  async updateLessonPriority(id: string, patch: Partial<LessonPriority>): Promise<LessonPriority> {
+    const row = this.db.lesson_priorities.find((x) => x.id === id)
+    if (!row) throw new Error('Уровень важности не найден')
+    this.assertSpaceAccess(row.space_id, true)
+    if (patch.is_default) {
+      this.db.lesson_priorities.forEach((x) => {
+        if (x.space_id === row.space_id) x.is_default = false
+      })
+    }
+    Object.assign(row, patch)
+    this.persist({ table: 'gradebook', spaceId: row.space_id })
+    return row
+  }
+
+  async deleteLessonPriority(id: string): Promise<void> {
+    const row = this.db.lesson_priorities.find((x) => x.id === id)
+    if (!row) return
+    this.assertSpaceAccess(row.space_id, true)
+    this.db.lesson_priorities = this.db.lesson_priorities.filter((x) => x.id !== id)
+    this.db.lessons.forEach((l) => {
+      if (l.priority_id === id) l.priority_id = null
+    })
+    this.db.grade_categories.forEach((c) => {
+      if (c.default_priority_id === id) c.default_priority_id = null
+    })
+    this.persist({ table: 'gradebook', spaceId: row.space_id })
+  }
+
+  /* ------------------- наборы пространств (один код) --------------------- */
+
+  private bundleView(bundle: SpaceBundle, meId: string): SpaceBundleView {
+    const ids = this.db.bundle_spaces
+      .filter((bs) => bs.bundle_id === bundle.id)
+      .map((bs) => bs.space_id)
+    return {
+      ...bundle,
+      is_owner: bundle.owner_id === meId,
+      spaces: this.db.spaces
+        .filter((sp) => ids.includes(sp.id))
+        .map((sp) => ({
+          id: sp.id,
+          name: sp.name,
+          color: sp.color,
+          owner_id: sp.owner_id,
+          is_mine: sp.owner_id === meId,
+        })),
+    }
+  }
+
+  async listBundles(): Promise<SpaceBundleView[]> {
+    const me = this.sessionUserId()
+    if (!me) return []
+    const mySpaceIds = this.mySpaceIds()
+    // Показываем свои наборы и те, куда добавлено моё пространство
+    const list = this.db.space_bundles.filter(
+      (b) =>
+        b.owner_id === me ||
+        this.db.bundle_spaces.some(
+          (bs) => bs.bundle_id === b.id && mySpaceIds.includes(bs.space_id),
+        ),
+    )
+    return delay(list.map((b) => this.bundleView(b, me)))
+  }
+
+  async createBundle(input: {
+    name: string
+    description?: string | null
+    permission?: Permission
+  }): Promise<SpaceBundle> {
+    const me = this.me()
+    const bundle: SpaceBundle = {
+      id: uid('bnd'),
+      name: input.name.trim() || 'Набор пространств',
+      description: input.description ?? null,
+      code: inviteCode(),
+      owner_id: me.id,
+      permission: input.permission ?? 'view',
+      created_at: nowIso(),
+    }
+    this.db.space_bundles.push(bundle)
+    this.persist({ table: 'spaces' })
+    return bundle
+  }
+
+  async updateBundle(id: string, patch: Partial<SpaceBundle>): Promise<SpaceBundle> {
+    const bundle = this.db.space_bundles.find((b) => b.id === id)
+    if (!bundle) throw new Error('Набор не найден')
+    if (bundle.owner_id !== this.me().id) throw new Error('Менять набор может только владелец')
+    Object.assign(bundle, patch)
+    this.persist({ table: 'spaces' })
+    return bundle
+  }
+
+  async deleteBundle(id: string): Promise<void> {
+    const bundle = this.db.space_bundles.find((b) => b.id === id)
+    if (!bundle) return
+    if (bundle.owner_id !== this.me().id) throw new Error('Удалить набор может только владелец')
+    this.db.space_bundles = this.db.space_bundles.filter((b) => b.id !== id)
+    this.db.bundle_spaces = this.db.bundle_spaces.filter((bs) => bs.bundle_id !== id)
+    this.persist({ table: 'spaces' })
+  }
+
+  async regenerateBundleCode(id: string): Promise<string> {
+    const bundle = this.db.space_bundles.find((b) => b.id === id)
+    if (!bundle) throw new Error('Набор не найден')
+    if (bundle.owner_id !== this.me().id) throw new Error('Недостаточно прав')
+    bundle.code = inviteCode()
+    this.persist({ table: 'spaces' })
+    return bundle.code
+  }
+
+  async addSpaceToBundle(bundleId: string, spaceId: string): Promise<void> {
+    // Пространство в набор добавляет только тот, кто вправе его редактировать
+    this.assertSpaceAccess(spaceId, true)
+    const bundle = this.db.space_bundles.find((b) => b.id === bundleId)
+    if (!bundle) throw new Error('Набор не найден')
+    if (this.db.bundle_spaces.some((bs) => bs.bundle_id === bundleId && bs.space_id === spaceId)) return
+    this.db.bundle_spaces.push({
+      bundle_id: bundleId,
+      space_id: spaceId,
+      added_by: this.me().id,
+      added_at: nowIso(),
+    })
+    this.persist({ table: 'spaces' })
+  }
+
+  async removeSpaceFromBundle(bundleId: string, spaceId: string): Promise<void> {
+    const bundle = this.db.space_bundles.find((b) => b.id === bundleId)
+    if (!bundle) return
+    const me = this.me().id
+    const member = this.db.space_members.find((m) => m.space_id === spaceId && m.user_id === me)
+    // Убрать может владелец набора или редактор самого пространства
+    if (bundle.owner_id !== me && member?.permission !== 'edit') {
+      throw new Error('Недостаточно прав')
+    }
+    this.db.bundle_spaces = this.db.bundle_spaces.filter(
+      (bs) => !(bs.bundle_id === bundleId && bs.space_id === spaceId),
+    )
+    this.persist({ table: 'spaces' })
+  }
+
+  async attachSpaceToBundleByCode(code: string, spaceId: string): Promise<SpaceBundle> {
+    const normalized = code.trim().toUpperCase()
+    const bundle = this.db.space_bundles.find((b) => b.code.toUpperCase() === normalized)
+    if (!bundle) throw new Error('Набор с таким кодом не найден')
+    await this.addSpaceToBundle(bundle.id, spaceId)
+    return bundle
   }
 
   async setAttendance(

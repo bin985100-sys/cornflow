@@ -14,6 +14,9 @@ import type {
   GradePeriod,
   GradeScale,
   GradebookSnapshot,
+  Lesson,
+  LessonPriority,
+  LessonStatus,
   Material,
   MaterialType,
   MaterialView,
@@ -22,6 +25,8 @@ import type {
   ProgressStatus,
   Role,
   Space,
+  SpaceBundle,
+  SpaceBundleView,
   SpaceView,
   Submission,
   Tag,
@@ -83,6 +88,7 @@ export interface CreateMaterialInput {
 export interface CreateAssignmentInput {
   space_id: string
   title: string
+  lesson_id?: string | null
   description?: string | null
   due_date?: string | null
   allow_late?: boolean
@@ -121,10 +127,26 @@ export interface CreateGradeItemInput {
   date: string
   period_id?: string | null
   category_id?: string | null
+  lesson_id?: string | null
   assignment_id?: string | null
   max_score?: number
   weight?: number
   scale_id?: string | null
+}
+
+export interface CreateLessonInput {
+  space_id: string
+  title: string
+  date: string
+  topic?: string | null
+  period_id?: string | null
+  category_id?: string | null
+  status_id?: string | null
+  priority_id?: string | null
+  starts_at?: string | null
+  duration_min?: number | null
+  homework?: string | null
+  notes?: string | null
 }
 
 export interface GradeInput {
@@ -295,6 +317,45 @@ export interface DataProvider {
   /** Upsert одной клетки журнала */
   setGrade(itemId: string, studentId: string, input: GradeInput): Promise<Grade>
   clearGrade(itemId: string, studentId: string): Promise<void>
+
+  /* уроки */
+  createLesson(input: CreateLessonInput): Promise<Lesson>
+  updateLesson(id: string, patch: Partial<Omit<Lesson, 'id' | 'space_id'>>): Promise<Lesson>
+  deleteLesson(id: string): Promise<void>
+
+  /* настраиваемые справочники занятий */
+  createLessonStatus(input: Omit<LessonStatus, 'id' | 'created_at'>): Promise<LessonStatus>
+  updateLessonStatus(
+    id: string,
+    patch: Partial<Omit<LessonStatus, 'id' | 'space_id'>>,
+  ): Promise<LessonStatus>
+  deleteLessonStatus(id: string): Promise<void>
+
+  createLessonPriority(input: Omit<LessonPriority, 'id' | 'created_at'>): Promise<LessonPriority>
+  updateLessonPriority(
+    id: string,
+    patch: Partial<Omit<LessonPriority, 'id' | 'space_id'>>,
+  ): Promise<LessonPriority>
+  deleteLessonPriority(id: string): Promise<void>
+
+  /* --- наборы пространств: один код на несколько пространств --- */
+  listBundles(): Promise<SpaceBundleView[]>
+  createBundle(input: {
+    name: string
+    description?: string | null
+    permission?: Permission
+  }): Promise<SpaceBundle>
+  updateBundle(
+    id: string,
+    patch: Partial<Pick<SpaceBundle, 'name' | 'description' | 'permission'>>,
+  ): Promise<SpaceBundle>
+  deleteBundle(id: string): Promise<void>
+  regenerateBundleCode(id: string): Promise<string>
+  /** Добавить в набор своё пространство (или любое, где есть право правки) */
+  addSpaceToBundle(bundleId: string, spaceId: string): Promise<void>
+  removeSpaceFromBundle(bundleId: string, spaceId: string): Promise<void>
+  /** Подключить своё пространство к чужому набору по его коду */
+  attachSpaceToBundleByCode(code: string, spaceId: string): Promise<SpaceBundle>
 
   setAttendance(
     spaceId: string,

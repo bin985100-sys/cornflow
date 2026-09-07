@@ -11,6 +11,11 @@ import type {
   GradePeriod,
   GradeScale,
   GradebookSnapshot,
+  Lesson,
+  LessonPriority,
+  LessonStatus,
+  SpaceBundle,
+  SpaceBundleView,
   Folder,
   Material,
   MaterialView,
@@ -34,13 +39,20 @@ import type {
   QuizView,
 } from '../types'
 import { colorFromString, inviteCode, nowIso, uid } from '../utils'
-import { DEFAULT_CATEGORIES, defaultPeriods, presetByKey } from '../grading'
+import {
+  DEFAULT_CATEGORIES,
+  DEFAULT_LESSON_PRIORITIES,
+  DEFAULT_LESSON_STATUSES,
+  defaultPeriods,
+  presetByKey,
+} from '../grading'
 import { BUCKET, supabase } from '../supabase'
 import type {
   ChangeEvent,
   CreateAssignmentInput,
   CreateFolderInput,
   CreateGradeItemInput,
+  CreateLessonInput,
   CreateMaterialInput,
   CreateSpaceInput,
   DataProvider,
@@ -364,13 +376,17 @@ export class SupabaseProvider implements DataProvider {
   async joinSpaceByCode(code: string): Promise<Space> {
     const me = await this.requireUser()
     // RPC обходит RLS ровно настолько, чтобы найти пространство по коду
-    const { data, error } = await supabase().rpc('join_space_by_code', {
-      p_code: code.trim().toUpperCase(),
-    })
+    const normalized = code.trim().toUpperCase()
+    const { data, error } = await supabase().rpc('join_space_by_code', { p_code: normalized })
     if (error) throw new Error(error.message)
-    if (!data) throw new Error('Пространство с таким кодом не найдено')
     void me
-    return data as Space
+    if (data) return data as Space
+
+    // Не пространство — пробуем код набора: вступаем во все его пространства
+    const bundle = await supabase().rpc('join_bundle_by_code', { p_code: normalized })
+    if (bundle.error) throw new Error(bundle.error.message)
+    if (!bundle.data) throw new Error('Пространство или набор с таким кодом не найдены')
+    return bundle.data as Space
   }
 
   async setMemberPermission(spaceId: string, userId: string, permission: Permission): Promise<void> {
@@ -1068,6 +1084,23 @@ export class SupabaseProvider implements DataProvider {
         ) as unknown as Grade[]) ?? [])
       : []
 
+    const lessons =
+      (unwrap(
+        await supabase().from('lessons').select('*').eq('space_id', spaceId).order('date'),
+      ) as unknown as Lesson[]) ?? []
+    const lessonStatuses =
+      (unwrap(
+        await supabase().from('lesson_statuses').select('*').eq('space_id', spaceId).order('position'),
+      ) as unknown as LessonStatus[]) ?? []
+    const lessonPriorities =
+      (unwrap(
+        await supabase()
+          .from('lesson_priorities')
+          .select('*')
+          .eq('space_id', spaceId)
+          .order('rank', { ascending: false }),
+      ) as unknown as LessonPriority[]) ?? []
+
     const criteria =
       (unwrap(
         await supabase()
@@ -1091,6 +1124,9 @@ export class SupabaseProvider implements DataProvider {
       grades,
       criteria,
       criterionScores,
+      lessons,
+      lessonStatuses,
+      lessonPriorities,
       attendance: (unwrap(attendance) as unknown as Attendance[]) ?? [],
       students,
     }
@@ -1109,11 +1145,19 @@ export class SupabaseProvider implements DataProvider {
           .then(() => undefined),
       )
     }
-    if (!current.categories.length) {
+    if (!current.lessonStatuses.length) {
       jobs.push(
         supabase()
-          .from('grade_categories')
-          .insert(DEFAULT_CATEGORIES.map((c) => ({ ...c, space_id: spaceId })))
+          .from('lesson_statuses')
+          .insert(DEFAULT_LESSON_STATUSES.map((x, i) => ({ ...x, space_id: spaceId, position: i })))
+          .then(() => undefined),
+      )
+    }
+    if (!current.lessonPriorities.length) {
+      jobs.push(
+        supabase()
+          .from('lesson_priorities')
+          .insert(DEFAULT_LESSON_PRIORITIES.map((x, i) => ({ ...x, space_id: spaceId, position: i })))
           .then(() => undefined),
       )
     }
@@ -1125,9 +1169,29 @@ export class SupabaseProvider implements DataProvider {
           .then(() => undefined),
       )
     }
-    if (!jobs.length) return current
-    await Promise.all(jobs.map((j) => Promise.resolve(j)))
-    return this.loadGradebook(spaceId)
+    if (jobs.length) await Promise.all(jobs.map((j) => Promise.resolve(j)))
+
+    // Категории заводим вторым проходом: они ссылаются на уровни важности
+    const after = jobs.length ? await this.loadGradebook(spaceId) : current
+    if (!after.categories.length) {
+      const byName = new Map(after.lessonPriorities.map((p) => [p.name, p.id]))
+      const { error } = await supabase()
+        .from('grade_categories')
+        .insert(
+          DEFAULT_CATEGORIES.map((c, i) => {
+            const { priority, ...rest } = c
+            return {
+              ...rest,
+              space_id: spaceId,
+              default_priority_id: byName.get(priority) ?? null,
+              position: i,
+            }
+          }),
+        )
+      if (error) throw new Error(error.message)
+      return this.loadGradebook(spaceId)
+    }
+    return jobs.length ? after : current
   }
 
   async createScale(input: Omit<GradeScale, 'id' | 'created_at'>): Promise<GradeScale> {
@@ -1301,6 +1365,215 @@ export class SupabaseProvider implements DataProvider {
       .eq('item_id', itemId)
       .eq('student_id', studentId)
     if (error) throw new Error(error.message)
+  }
+
+  /* ------------------------------ уроки ---------------------------------- */
+
+  async createLesson(input: CreateLessonInput): Promise<Lesson> {
+    // Статус и важность по умолчанию берём из справочников пространства
+    const [statuses, priorities, category] = await Promise.all([
+      supabase().from('lesson_statuses').select('id,is_default').eq('space_id', input.space_id),
+      supabase().from('lesson_priorities').select('id,is_default').eq('space_id', input.space_id),
+      input.category_id
+        ? supabase()
+            .from('grade_categories')
+            .select('default_priority_id')
+            .eq('id', input.category_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ])
+    const defStatus =
+      (statuses.data as Array<{ id: string; is_default: boolean }> | null)?.find((x) => x.is_default)
+        ?.id ?? null
+    const defPriority =
+      (priorities.data as Array<{ id: string; is_default: boolean }> | null)?.find(
+        (x) => x.is_default,
+      )?.id ?? null
+    const catPriority =
+      (category.data as { default_priority_id: string | null } | null)?.default_priority_id ?? null
+
+    return unwrap(
+      await supabase()
+        .from('lessons')
+        .insert({
+          space_id: input.space_id,
+          period_id: input.period_id ?? null,
+          category_id: input.category_id ?? null,
+          status_id: input.status_id ?? defStatus,
+          priority_id: input.priority_id ?? catPriority ?? defPriority,
+          title: input.title.trim() || 'Занятие',
+          topic: input.topic ?? null,
+          date: input.date,
+          starts_at: input.starts_at ?? null,
+          duration_min: input.duration_min ?? null,
+          homework: input.homework ?? null,
+          notes: input.notes ?? null,
+        })
+        .select()
+        .single(),
+    ) as unknown as Lesson
+  }
+
+  async updateLesson(id: string, patch: Partial<Lesson>): Promise<Lesson> {
+    return unwrap(
+      await supabase().from('lessons').update(patch).eq('id', id).select().single(),
+    ) as unknown as Lesson
+  }
+
+  async deleteLesson(id: string): Promise<void> {
+    const { error } = await supabase().from('lessons').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+  }
+
+  /* --------------------- справочники занятий ----------------------------- */
+
+  private async dropDefault(table: string, spaceId: string, column: string) {
+    await supabase().from(table).update({ [column]: false }).eq('space_id', spaceId)
+  }
+
+  async createLessonStatus(input: Omit<LessonStatus, 'id' | 'created_at'>): Promise<LessonStatus> {
+    if (input.is_default) await this.dropDefault('lesson_statuses', input.space_id, 'is_default')
+    return unwrap(
+      await supabase().from('lesson_statuses').insert(input).select().single(),
+    ) as unknown as LessonStatus
+  }
+
+  async updateLessonStatus(id: string, patch: Partial<LessonStatus>): Promise<LessonStatus> {
+    if (patch.is_default) {
+      const { data } = await supabase().from('lesson_statuses').select('space_id').eq('id', id).single()
+      if (data) await this.dropDefault('lesson_statuses', (data as { space_id: string }).space_id, 'is_default')
+    }
+    return unwrap(
+      await supabase().from('lesson_statuses').update(patch).eq('id', id).select().single(),
+    ) as unknown as LessonStatus
+  }
+
+  async deleteLessonStatus(id: string): Promise<void> {
+    const { error } = await supabase().from('lesson_statuses').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+  }
+
+  async createLessonPriority(
+    input: Omit<LessonPriority, 'id' | 'created_at'>,
+  ): Promise<LessonPriority> {
+    if (input.is_default) await this.dropDefault('lesson_priorities', input.space_id, 'is_default')
+    return unwrap(
+      await supabase().from('lesson_priorities').insert(input).select().single(),
+    ) as unknown as LessonPriority
+  }
+
+  async updateLessonPriority(id: string, patch: Partial<LessonPriority>): Promise<LessonPriority> {
+    if (patch.is_default) {
+      const { data } = await supabase()
+        .from('lesson_priorities')
+        .select('space_id')
+        .eq('id', id)
+        .single()
+      if (data)
+        await this.dropDefault('lesson_priorities', (data as { space_id: string }).space_id, 'is_default')
+    }
+    return unwrap(
+      await supabase().from('lesson_priorities').update(patch).eq('id', id).select().single(),
+    ) as unknown as LessonPriority
+  }
+
+  async deleteLessonPriority(id: string): Promise<void> {
+    const { error } = await supabase().from('lesson_priorities').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+  }
+
+  /* ------------------- наборы пространств (один код) --------------------- */
+
+  async listBundles(): Promise<SpaceBundleView[]> {
+    const me = await this.requireUser()
+    const rows = unwrap(
+      await supabase()
+        .from('space_bundles')
+        .select('*, bundle_spaces(space_id, spaces(id, name, color, owner_id))')
+        .order('created_at'),
+    ) as unknown as Array<
+      SpaceBundle & {
+        bundle_spaces: Array<{
+          space_id: string
+          spaces: { id: string; name: string; color: Space['color']; owner_id: string } | null
+        }>
+      }
+    >
+    return rows.map((b) => ({
+      ...b,
+      is_owner: b.owner_id === me.id,
+      spaces: (b.bundle_spaces ?? [])
+        .map((bs) => bs.spaces)
+        .filter((sp): sp is { id: string; name: string; color: Space['color']; owner_id: string } => !!sp)
+        .map((sp) => ({ ...sp, is_mine: sp.owner_id === me.id })),
+    }))
+  }
+
+  async createBundle(input: {
+    name: string
+    description?: string | null
+    permission?: Permission
+  }): Promise<SpaceBundle> {
+    const me = await this.requireUser()
+    return unwrap(
+      await supabase()
+        .from('space_bundles')
+        .insert({
+          name: input.name.trim() || 'Набор пространств',
+          description: input.description ?? null,
+          permission: input.permission ?? 'view',
+          owner_id: me.id,
+          code: inviteCode(),
+        })
+        .select()
+        .single(),
+    ) as unknown as SpaceBundle
+  }
+
+  async updateBundle(id: string, patch: Partial<SpaceBundle>): Promise<SpaceBundle> {
+    return unwrap(
+      await supabase().from('space_bundles').update(patch).eq('id', id).select().single(),
+    ) as unknown as SpaceBundle
+  }
+
+  async deleteBundle(id: string): Promise<void> {
+    const { error } = await supabase().from('space_bundles').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+  }
+
+  async regenerateBundleCode(id: string): Promise<string> {
+    const code = inviteCode()
+    const { error } = await supabase().from('space_bundles').update({ code }).eq('id', id)
+    if (error) throw new Error(error.message)
+    return code
+  }
+
+  async addSpaceToBundle(bundleId: string, spaceId: string): Promise<void> {
+    const me = await this.requireUser()
+    // Право добавить пространство проверяет политика: нужен доступ на правку
+    const { error } = await supabase()
+      .from('bundle_spaces')
+      .insert({ bundle_id: bundleId, space_id: spaceId, added_by: me.id })
+    if (error && !/duplicate key/i.test(error.message)) throw new Error(error.message)
+  }
+
+  async removeSpaceFromBundle(bundleId: string, spaceId: string): Promise<void> {
+    const { error } = await supabase()
+      .from('bundle_spaces')
+      .delete()
+      .eq('bundle_id', bundleId)
+      .eq('space_id', spaceId)
+    if (error) throw new Error(error.message)
+  }
+
+  async attachSpaceToBundleByCode(code: string, spaceId: string): Promise<SpaceBundle> {
+    const { data, error } = await supabase().rpc('attach_space_to_bundle', {
+      p_code: code.trim().toUpperCase(),
+      p_space: spaceId,
+    })
+    if (error) throw new Error(error.message)
+    if (!data) throw new Error('Набор с таким кодом не найден')
+    return data as SpaceBundle
   }
 
   async setAttendance(

@@ -19,6 +19,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { db } from '@/lib/db'
 import { cardPalette, cx } from '@/lib/utils'
 import { Avatar, Segmented } from '@/components/ui/primitives'
+import { BundlesSection } from '@/components/gradebook/BundlesSection'
 import { useNavigate } from 'react-router-dom'
 
 export function SettingsPage() {
@@ -250,6 +251,9 @@ export function SettingsPage() {
           ))}
         </ul>
       </section>
+
+      {/* наборы пространств — один код на несколько пространств */}
+      <BundlesSection />
 
       {/* пароль */}
       {setPassword && (

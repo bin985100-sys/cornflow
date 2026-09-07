@@ -6,6 +6,8 @@
 import type {
   Attendance,
   AttendanceStatus,
+  LessonPriority,
+  LessonStatus,
   Grade,
   GradeCategory,
   GradeColor,
@@ -195,13 +197,44 @@ export function presetByKey(key: string): ScalePreset {
   return SCALE_PRESETS.find((p) => p.key === key) ?? SCALE_PRESETS[0]
 }
 
-/** Категории работ по умолчанию для нового пространства */
-export const DEFAULT_CATEGORIES: Array<Pick<GradeCategory, 'name' | 'weight' | 'color'>> = [
-  { name: 'Контрольная', weight: 3, color: 'red' },
-  { name: 'Самостоятельная', weight: 2, color: 'yellow' },
-  { name: 'Домашняя работа', weight: 1, color: 'green' },
-  { name: 'Устный ответ', weight: 1, color: 'blue' },
-  { name: 'Проект', weight: 3, color: 'purple' },
+/**
+ * Стартовые типы работ. Это только пресет: имя, код, вес, цвет, важность и
+ * участие в среднем балле меняются в настройках, любой тип можно удалить.
+ */
+export type CategoryPreset = Pick<GradeCategory, 'name' | 'code' | 'weight' | 'color'> & {
+  counts_toward_grade: boolean
+  /** Имя уровня важности из пресета ниже — связывается при создании */
+  priority: string
+}
+
+export const DEFAULT_CATEGORIES: CategoryPreset[] = [
+  { name: 'Суммативная работа', code: 'SA', weight: 3, color: 'red', counts_toward_grade: true, priority: 'Высокая' },
+  { name: 'Формативная работа', code: 'FA', weight: 1, color: 'blue', counts_toward_grade: true, priority: 'Обычная' },
+  { name: 'Домашняя работа', code: 'HW', weight: 1, color: 'green', counts_toward_grade: true, priority: 'Обычная' },
+  { name: 'Устный ответ', code: null, weight: 1, color: 'yellow', counts_toward_grade: true, priority: 'Обычная' },
+  { name: 'Проект', code: null, weight: 3, color: 'purple', counts_toward_grade: true, priority: 'Высокая' },
+  { name: 'Лекция', code: null, weight: 0, color: 'blue', counts_toward_grade: false, priority: 'Низкая' },
+]
+
+/** Стартовые статусы занятий — список меняется в настройках */
+export const DEFAULT_LESSON_STATUSES: Array<
+  Pick<LessonStatus, 'name' | 'color' | 'is_held' | 'is_default'>
+> = [
+  { name: 'Запланировано', color: 'blue', is_held: false, is_default: true },
+  { name: 'Идёт сейчас', color: 'yellow', is_held: true, is_default: false },
+  { name: 'Проведено', color: 'green', is_held: true, is_default: false },
+  { name: 'Перенесено', color: 'purple', is_held: false, is_default: false },
+  { name: 'Отменено', color: 'red', is_held: false, is_default: false },
+]
+
+/** Стартовые уровни важности — тоже полностью настраиваемые */
+export const DEFAULT_LESSON_PRIORITIES: Array<
+  Pick<LessonPriority, 'name' | 'color' | 'rank' | 'is_default'>
+> = [
+  { name: 'Критическая', color: 'red', rank: 30, is_default: false },
+  { name: 'Высокая', color: 'yellow', rank: 20, is_default: false },
+  { name: 'Обычная', color: 'blue', rank: 10, is_default: true },
+  { name: 'Низкая', color: 'green', rank: 0, is_default: false },
 ]
 
 /* ------------------------------ вычисления -------------------------------- */
@@ -270,21 +303,24 @@ export function clamp(n: number, min: number, max: number): number {
 /* ------------------------------ агрегаты ---------------------------------- */
 
 export interface Aggregate {
-  /** Средний процент по всем учтённым работам с весами */
-  percent: number | null
-  /** Средний балл в единицах шкалы (для 5-балльной — 4.36) */
+  /** Средний балл в единицах шкалы — основная метрика журнала */
   average: number | null
+  /** Тот же результат в процентах — для графиков и порогов */
+  percent: number | null
   /** Итоговая отметка по шкале */
   level: GradeLevel | null
+  /** Сумма весов учтённых работ */
+  weight: number
   counted: number
   missing: number
   absent: number
 }
 
 const EMPTY_AGGREGATE: Aggregate = {
-  percent: null,
   average: null,
+  percent: null,
   level: null,
+  weight: 0,
   counted: 0,
   missing: 0,
   absent: 0,
@@ -297,7 +333,23 @@ export interface AggregateContext {
   scaleFor: (item: GradeItem) => GradeScale
 }
 
-/** Итог ученика по набору работ: взвешенное среднее в процентах + отметка */
+/** Балл работы, приведённый к единицам шкалы: 8 из 16 по 8-балльной → 4 */
+export function scoreInScaleUnits(
+  score: number,
+  item: Pick<GradeItem, 'max_score'>,
+  scale: GradeScale,
+): number {
+  const min = scale.kind === 'points' ? scale.min_value : 0
+  if (item.max_score === scale.max_value) return score
+  const span = Math.max(1e-9, item.max_score - min)
+  return min + ((score - min) / span) * (scale.max_value - min)
+}
+
+/**
+ * Итог ученика — средневзвешенный балл в единицах шкалы («средний балл 6.4»).
+ * Вес работы = вес её типа × собственный вес; типы с выключенным
+ * «учитывать в среднем балле» в расчёт не идут.
+ */
 export function aggregateFor(studentId: string, ctx: AggregateContext): Aggregate {
   const byCategory = new Map<string, GradeCategory>(ctx.categories.map((c) => [c.id, c]))
   let weighted = 0
@@ -308,6 +360,9 @@ export function aggregateFor(studentId: string, ctx: AggregateContext): Aggregat
   let scaleForTotal: GradeScale | null = null
 
   for (const item of ctx.items) {
+    const category = item.category_id ? byCategory.get(item.category_id) ?? null : null
+    if (category && !category.counts_toward_grade) continue
+
     const grade = ctx.grades.find((g) => g.item_id === item.id && g.student_id === studentId)
     const scale = ctx.scaleFor(item)
     if (!scaleForTotal) scaleForTotal = scale
@@ -320,24 +375,27 @@ export function aggregateFor(studentId: string, ctx: AggregateContext): Aggregat
       missing += 1
       continue
     }
-    const catWeight = item.category_id ? byCategory.get(item.category_id)?.weight ?? 1 : 1
-    const w = Math.max(0, catWeight) * Math.max(0, item.weight)
+
+    const w = Math.max(0, category?.weight ?? 1) * Math.max(0, item.weight)
     if (w <= 0) continue
-    weighted += percentOf(grade.score, item.max_score, scale) * w
+    weighted += scoreInScaleUnits(grade.score, item, scale) * w
     weightSum += w
     counted += 1
   }
 
   if (!weightSum || !scaleForTotal) return { ...EMPTY_AGGREGATE, missing, absent }
 
-  const percent = weighted / weightSum
-  const lvl = levelFor(percent, scaleForTotal)
-  const average =
-    scaleForTotal.kind === 'points'
-      ? scaleForTotal.min_value + (percent / 100) * (scaleForTotal.max_value - scaleForTotal.min_value)
-      : lvl?.value ?? null
-
-  return { percent, average, level: lvl, counted, missing, absent }
+  const average = weighted / weightSum
+  const percent = percentOf(average, scaleForTotal.max_value, scaleForTotal)
+  return {
+    average,
+    percent,
+    level: levelFor(percent, scaleForTotal),
+    weight: weightSum,
+    counted,
+    missing,
+    absent,
+  }
 }
 
 /** Средний процент по работе среди всех учеников — для аналитики */

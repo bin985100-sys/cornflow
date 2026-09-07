@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, BookOpen, CalendarCheck2, Grid3x3, Settings2 } from 'lucide-react'
+import { BarChart3, BookOpen, CalendarCheck2, CalendarRange, Grid3x3, Settings2 } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
 import { useAuth } from '@/context/AuthContext'
 import { useGradebook } from '@/hooks/useGradebook'
 import { GradeGrid } from '@/components/gradebook/GradeGrid'
+import { LessonsBoard } from '@/components/gradebook/LessonsBoard'
 import { DiaryView } from '@/components/gradebook/DiaryView'
 import { AttendanceBoard } from '@/components/gradebook/AttendanceBoard'
 import { AnalyticsView } from '@/components/gradebook/AnalyticsView'
@@ -13,7 +14,7 @@ import { EmptyState, RowSkeleton, Segmented } from '@/components/ui/primitives'
 import { Avatar } from '@/components/ui/primitives'
 import type { GradeItem } from '@/lib/types'
 
-type Tab = 'grid' | 'diary' | 'attendance' | 'analytics' | 'settings'
+type Tab = 'lessons' | 'grid' | 'diary' | 'attendance' | 'analytics' | 'settings'
 
 /**
  * Журнал пространства. Для учителя — сетка «ученики × работы», посещаемость,
@@ -24,10 +25,11 @@ export function GradebookPage() {
   const { user } = useAuth()
   const gb = useGradebook()
   const [tab, setTab] = useState<Tab>(gb.canEdit ? 'grid' : 'diary')
-  const [itemModal, setItemModal] = useState<{ open: boolean; item: GradeItem | null }>({
-    open: false,
-    item: null,
-  })
+  const [itemModal, setItemModal] = useState<{
+    open: boolean
+    item: GradeItem | null
+    lessonId?: string | null
+  }>({ open: false, item: null })
   const [diaryStudent, setDiaryStudent] = useState<string | null>(null)
 
   useEffect(() => {
@@ -36,6 +38,7 @@ export function GradebookPage() {
 
   const tabs = useMemo(() => {
     const base: Array<{ value: Tab; label: React.ReactNode }> = []
+    base.push({ value: 'lessons', label: <><CalendarRange size={14} /> Уроки</> })
     if (gb.canEdit) base.push({ value: 'grid', label: <><Grid3x3 size={14} /> Журнал</> })
     base.push({ value: 'diary', label: <><BookOpen size={14} /> Дневник</> })
     base.push({ value: 'attendance', label: <><CalendarCheck2 size={14} /> Посещаемость</> })
@@ -98,6 +101,16 @@ export function GradebookPage() {
         <RowSkeleton count={6} />
       ) : (
         <>
+          {tab === 'lessons' && (
+            <LessonsBoard
+              gb={gb}
+              onEditItem={(item) => setItemModal({ open: true, item })}
+              onCreateItemForLesson={(lesson) =>
+                setItemModal({ open: true, item: null, lessonId: lesson.id })
+              }
+            />
+          )}
+
           {tab === 'grid' && (
             <GradeGrid
               gb={gb}
@@ -145,6 +158,7 @@ export function GradebookPage() {
         gb={gb}
         open={itemModal.open}
         item={itemModal.item}
+        lessonId={itemModal.lessonId ?? null}
         onClose={() => setItemModal({ open: false, item: null })}
       />
     </div>

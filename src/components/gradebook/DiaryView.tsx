@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { GradeItem } from '@/lib/types'
 import { CalendarDays, MessageSquare, Target, TrendingUp } from 'lucide-react'
 import { Avatar, EmptyState, ProgressBar } from '@/components/ui/primitives'
 import {
@@ -13,6 +14,7 @@ import {
   trimNumber,
 } from '@/lib/grading'
 import { formatDate, plural } from '@/lib/utils'
+import { CellEditor } from './GradeGrid'
 import type { GradebookApi } from '@/hooks/useGradebook'
 
 /** Дневник ученика: оценки по дням, средний балл, прогноз и посещаемость. */
@@ -43,6 +45,8 @@ export function DiaryView({ gb, studentId }: { gb: GradebookApi; studentId: stri
   const currentIndex = agg.level ? levels.findIndex((l) => l.id === agg.level?.id) : levels.length - 1
   const target = currentIndex > 0 ? levels[currentIndex - 1] : levels[0]
   const [targetId, setTargetId] = useState<string | null>(null)
+  /** Правка оценки прямо из дневника — доступна тем, кто ведёт журнал */
+  const [editing, setEditing] = useState<{ item: GradeItem; x: number; y: number } | null>(null)
   const chosenTarget = levels.find((l) => l.id === targetId) ?? target
 
   const ungraded = items.filter(
@@ -69,9 +73,13 @@ export function DiaryView({ gb, studentId }: { gb: GradebookApi; studentId: stri
       {/* Итоги */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Средний результат"
-          value={agg.percent === null ? '—' : `${Math.round(agg.percent)}%`}
-          sub={agg.average !== null ? `≈ ${trimNumber(Math.round(agg.average * 100) / 100)} по шкале` : 'Нет оценок'}
+          label="Средний балл"
+          value={
+            agg.average === null
+              ? '—'
+              : `${trimNumber(Math.round(agg.average * 100) / 100)} из ${trimNumber(gb.defaultScale.max_value)}`
+          }
+          sub={agg.percent !== null ? `${Math.round(agg.percent)}% · по ${agg.counted} работам` : 'Нет оценок'}
           bar={agg.percent ?? 0}
         />
         <div className="cf-card flex flex-col justify-between p-4">
@@ -178,18 +186,36 @@ export function DiaryView({ gb, studentId }: { gb: GradebookApi; studentId: stri
               const cat = categories.find((c) => c.id === item.category_id)
               return (
                 <li key={item.id} className="flex items-center gap-3 px-4 py-3">
-                  <span
-                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] text-[15px] font-bold"
-                    style={{ background: gradePalette[color].bg, color: gradePalette[color].fg }}
-                  >
-                    {gradeLabel(grade, item, scale)}
-                  </span>
+                  {gb.canEdit ? (
+                    <button
+                      onClick={(e) => {
+                        const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                        setEditing({ item, x: r.left, y: r.bottom + 4 })
+                      }}
+                      title="Изменить оценку или добавить комментарий"
+                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] text-[15px] font-bold transition hover:brightness-95"
+                      style={{ background: gradePalette[color].bg, color: gradePalette[color].fg }}
+                    >
+                      {gradeLabel(grade, item, scale)}
+                    </button>
+                  ) : (
+                    <span
+                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] text-[15px] font-bold"
+                      style={{ background: gradePalette[color].bg, color: gradePalette[color].fg }}
+                    >
+                      {gradeLabel(grade, item, scale)}
+                    </span>
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13.5px] font-medium">{item.title}</p>
                     <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
                       <span className="inline-flex items-center gap-1">
                         <CalendarDays size={12} /> {formatDate(item.date)}
                       </span>
+                      {(() => {
+                        const lesson = gb.lessons.find((l) => l.id === item.lesson_id)
+                        return lesson ? <span>· {lesson.title}</span> : null
+                      })()}
                       {cat && (
                         <span
                           className="cf-pill px-2 py-[2px] text-[11px]"
@@ -252,6 +278,17 @@ export function DiaryView({ gb, studentId }: { gb: GradebookApi; studentId: stri
           </ul>
         )}
       </section>
+
+      {editing && (
+        <CellEditor
+          gb={gb}
+          item={editing.item}
+          studentId={studentId}
+          x={editing.x}
+          y={editing.y}
+          onClose={() => setEditing(null)}
+        />
+      )}
 
       {/* Посещаемость */}
       {!!attendance.length && (

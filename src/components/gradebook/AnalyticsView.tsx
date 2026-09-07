@@ -20,7 +20,7 @@ export function AnalyticsView({ gb }: { gb: GradebookApi }) {
     () =>
       students
         .map((s) => ({ student: s, agg: aggregateFor(s.id, { items, grades, categories, scaleFor }) }))
-        .sort((a, b) => (b.agg.percent ?? -1) - (a.agg.percent ?? -1)),
+        .sort((a, b) => (b.agg.average ?? -1) - (a.agg.average ?? -1)),
     [students, items, grades, categories, scaleFor],
   )
 
@@ -44,7 +44,7 @@ export function AnalyticsView({ gb }: { gb: GradebookApi }) {
   )
 
   const classAverage = useMemo(() => {
-    const values = perStudent.map((p) => p.agg.percent).filter((v): v is number => v !== null)
+    const values = perStudent.map((p) => p.agg.average).filter((v): v is number => v !== null)
     if (!values.length) return null
     return values.reduce((a, b) => a + b, 0) / values.length
   }, [perStudent])
@@ -89,9 +89,13 @@ export function AnalyticsView({ gb }: { gb: GradebookApi }) {
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="cf-card p-4">
-          <span className="text-[12px] font-semibold uppercase tracking-wide text-ink-3">Средний по классу</span>
+          <span className="text-[12px] font-semibold uppercase tracking-wide text-ink-3">
+            Средний балл класса
+          </span>
           <p className="mt-1.5 text-[26px] font-bold leading-none">
-            {classAverage === null ? '—' : `${Math.round(classAverage)}%`}
+            {classAverage === null
+              ? '—'
+              : `${trimNumber(Math.round(classAverage * 100) / 100)} из ${trimNumber(defaultScale.max_value)}`}
           </p>
         </div>
         <div className="cf-card p-4">
@@ -158,7 +162,7 @@ export function AnalyticsView({ gb }: { gb: GradebookApi }) {
         {/* Рейтинг */}
         <section className="cf-card p-4">
           <h3 className="flex items-center gap-2 text-[14px] font-semibold">
-            <Award size={15} /> Рейтинг по среднему результату
+            <Award size={15} /> Рейтинг по среднему баллу
           </h3>
           <ol className="mt-3 divide-y divide-line">
             {perStudent.map((row, i) => (
@@ -179,7 +183,9 @@ export function AnalyticsView({ gb }: { gb: GradebookApi }) {
                   </span>
                 )}
                 <span className="w-12 text-right text-[13px] font-semibold">
-                  {row.agg.percent === null ? '—' : `${Math.round(row.agg.percent)}%`}
+                  {row.agg.average === null
+                    ? '—'
+                    : trimNumber(Math.round(row.agg.average * 100) / 100)}
                 </span>
               </li>
             ))}

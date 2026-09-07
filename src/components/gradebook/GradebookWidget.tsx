@@ -81,22 +81,20 @@ export function GradebookWidget() {
           <Metric label="Работ в периоде" value={String(gb.periodItems.length)} />
           <Metric label="Учеников" value={String(gb.students.length)} />
           <Metric
-            label="Средний по классу"
-            value={classAverage === null ? '—' : `${Math.round(classAverage)}%`}
+            label="Средний балл класса"
+            value={classAverage === null ? '—' : trimNumber(Math.round(classAverage * 100) / 100)}
           />
           <Metric label="Не выставлено" value={String(missing)} accent={missing > 0} />
         </div>
       ) : (
         <div className="mt-4 flex flex-wrap items-center gap-4">
           <div>
-            <p className="text-[12px] font-semibold uppercase tracking-wide text-ink-3">Средний</p>
+            <p className="text-[12px] font-semibold uppercase tracking-wide text-ink-3">Средний балл</p>
             <p className="mt-1 text-[26px] font-bold leading-none">
-              {agg.percent === null ? '—' : `${Math.round(agg.percent)}%`}
-              {agg.average !== null && (
-                <span className="ml-1.5 text-[14px] font-medium text-ink-3">
-                  {trimNumber(Math.round(agg.average * 100) / 100)}
-                </span>
-              )}
+              {agg.average === null ? '—' : trimNumber(Math.round(agg.average * 100) / 100)}
+              <span className="ml-1.5 text-[14px] font-medium text-ink-3">
+                из {trimNumber(gb.defaultScale.max_value)}
+              </span>
             </p>
           </div>
           {agg.level && (

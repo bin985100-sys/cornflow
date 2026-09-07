@@ -14,11 +14,14 @@ export function ItemModal({
   gb,
   open,
   item,
+  lessonId = null,
   onClose,
 }: {
   gb: GradebookApi
   open: boolean
   item: GradeItem | null
+  /** Занятие, из которого создают работу */
+  lessonId?: string | null
   onClose: () => void
 }) {
   const toast = useToast()
@@ -31,6 +34,7 @@ export function ItemModal({
   const [maxScore, setMaxScore] = useState('5')
   const [weight, setWeight] = useState('1')
   const [assignmentId, setAssignmentId] = useState<string>('')
+  const [lesson, setLesson] = useState<string>('')
   const [busy, setBusy] = useState(false)
   /** Черновик критериев: у новых работ id временный, при сохранении создаются заново */
   const [criteria, setCriteria] = useState<DraftCriterion[]>([])
@@ -56,6 +60,7 @@ export function ItemModal({
       setMaxScore(trimNumber(item.max_score))
       setWeight(trimNumber(item.weight))
       setAssignmentId(item.assignment_id ?? '')
+      setLesson(item.lesson_id ?? '')
       setCriteria(
         gb.criteria
           .filter((c) => c.item_id === item.id)
@@ -71,9 +76,10 @@ export function ItemModal({
       setMaxScore(trimNumber(gb.defaultScale.max_value))
       setWeight('1')
       setAssignmentId('')
+      setLesson(lessonId ?? '')
       setCriteria([])
     }
-  }, [open, item, gb.categories, gb.period, gb.defaultScale, gb.criteria])
+  }, [open, item, lessonId, gb.categories, gb.period, gb.defaultScale, gb.criteria])
 
   // Сменили шкалу — подставляем её максимум, если пользователь его не трогал
   useEffect(() => {
@@ -100,6 +106,7 @@ export function ItemModal({
         date,
         period_id: periodId || null,
         category_id: categoryId || null,
+        lesson_id: lesson || null,
         assignment_id: assignmentId || null,
         max_score: Number(maxScore.replace(',', '.')) || scale.max_value,
         weight: Number(weight.replace(',', '.')) || 1,
@@ -205,7 +212,10 @@ export function ItemModal({
           </Field>
         </div>
 
-        <Field label="Категория и вес" hint="Вес категории умножается на вес работы при расчёте итога">
+        <Field
+          label="Тип работы и вес"
+          hint="Вес типа умножается на вес работы при расчёте среднего балла; типы настраиваются в «Настройках»"
+        >
           <div className="flex flex-wrap gap-2">
             {gb.categories.map((c) => (
               <button
@@ -225,7 +235,7 @@ export function ItemModal({
                     : {}),
                 }}
               >
-                {c.name} · ×{trimNumber(c.weight)}
+                {c.code ? `${c.code} · ${c.name}` : c.name} · ×{trimNumber(c.weight)}
               </button>
             ))}
           </div>
@@ -261,6 +271,19 @@ export function ItemModal({
             />
           </Field>
         </div>
+
+        {!!gb.periodLessons.length && (
+          <Field label="Занятие" hint="Работа появится в карточке урока в разделе «Уроки»">
+            <select className="cf-input w-full" value={lesson} onChange={(e) => setLesson(e.target.value)}>
+              <option value="">Без привязки к занятию</option>
+              {gb.periodLessons.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.date.slice(0, 10)} · {l.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
 
         <Field
           label="Критерии оценивания"

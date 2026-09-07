@@ -3,7 +3,16 @@ import { db } from '@/lib/db'
 import { useApp } from '@/context/AppContext'
 import { useAuth } from '@/context/AuthContext'
 import { currentPeriod, presetByKey } from '@/lib/grading'
-import type { GradeItem, GradePeriod, GradeScale, GradebookSnapshot } from '@/lib/types'
+import type {
+  GradeCategory,
+  GradeItem,
+  GradePeriod,
+  GradeScale,
+  GradebookSnapshot,
+  Lesson,
+  LessonPriority,
+  LessonStatus,
+} from '@/lib/types'
 
 const EMPTY: GradebookSnapshot = {
   scales: [],
@@ -13,6 +22,9 @@ const EMPTY: GradebookSnapshot = {
   grades: [],
   criteria: [],
   criterionScores: [],
+  lessons: [],
+  lessonStatuses: [],
+  lessonPriorities: [],
   attendance: [],
   students: [],
 }
@@ -27,6 +39,11 @@ export interface GradebookApi extends GradebookSnapshot {
   setPeriodId: (id: string | null) => void
   /** Работы выбранного периода */
   periodItems: GradeItem[]
+  /** Занятия выбранного периода */
+  periodLessons: Lesson[]
+  statusOf: (lesson: Lesson) => LessonStatus | null
+  priorityOf: (lesson: Lesson) => LessonPriority | null
+  categoryOf: (row: { category_id: string | null }) => GradeCategory | null
   defaultScale: GradeScale
   scaleFor: (item: GradeItem) => GradeScale
   refresh: () => Promise<void>
@@ -111,6 +128,29 @@ export function useGradebook(): GradebookApi {
     )
   }, [data.items, period])
 
+  const periodLessons = useMemo(() => {
+    if (!period) return data.lessons
+    return data.lessons.filter(
+      (l) =>
+        l.period_id === period.id ||
+        (!l.period_id && l.date >= period.start_date && l.date <= period.end_date),
+    )
+  }, [data.lessons, period])
+
+  const statusOf = useCallback(
+    (lesson: Lesson) => data.lessonStatuses.find((x) => x.id === lesson.status_id) ?? null,
+    [data.lessonStatuses],
+  )
+  const priorityOf = useCallback(
+    (lesson: Lesson) => data.lessonPriorities.find((x) => x.id === lesson.priority_id) ?? null,
+    [data.lessonPriorities],
+  )
+  const categoryOf = useCallback(
+    (row: { category_id: string | null }) =>
+      row.category_id ? data.categories.find((c) => c.id === row.category_id) ?? null : null,
+    [data.categories],
+  )
+
   const defaultScale = useMemo(
     () => data.scales.find((s) => s.is_default) ?? data.scales[0] ?? FALLBACK_SCALE,
     [data.scales],
@@ -139,6 +179,10 @@ export function useGradebook(): GradebookApi {
     periodId: period?.id ?? null,
     setPeriodId,
     periodItems,
+    periodLessons,
+    statusOf,
+    priorityOf,
+    categoryOf,
     defaultScale,
     scaleFor,
     refresh: load,
