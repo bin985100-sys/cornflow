@@ -4,7 +4,6 @@ import type {
   Attendance,
   AttendanceStatus,
   CriterionScore,
-  Folder,
   Grade,
   GradeCategory,
   GradeCriterion,
@@ -12,6 +11,7 @@ import type {
   GradePeriod,
   GradeScale,
   GradebookSnapshot,
+  Folder,
   Material,
   MaterialView,
   Permission,
@@ -23,24 +23,25 @@ import type {
   Tag,
   Task,
   User,
+  Comment,
+  CommentView,
+  Quiz,
+  QuizAttempt,
+  QuizForStudent,
+  QuizOption,
+  QuizQuestion,
+  QuizResult,
+  QuizView,
 } from '../types'
-import {
-  colorFromString,
-  formatBytes,
-  inviteCode,
-  nowIso,
-  resolveMime,
-  safeFileKey,
-  uid,
-} from '../utils'
+import { colorFromString, inviteCode, nowIso, uid } from '../utils'
 import { DEFAULT_CATEGORIES, defaultPeriods, presetByKey } from '../grading'
 import { BUCKET, supabase } from '../supabase'
 import type {
   ChangeEvent,
   CreateAssignmentInput,
   CreateFolderInput,
-  CreateMaterialInput,
   CreateGradeItemInput,
+  CreateMaterialInput,
   CreateSpaceInput,
   DataProvider,
   GradeInput,
@@ -48,6 +49,9 @@ import type {
   SignUpInput,
   UploadResult,
 } from './provider'
+
+const PENDING_ROLE_KEY = 'cornflow.pendingRole'
+const GOOGLE_MODE_KEY = 'cornflow.googleMode'
 
 /* ---------------------------------------------------------------------------
    Реализация поверх Supabase: auth + postgres + storage + realtime.
@@ -110,9 +114,31 @@ export class SupabaseProvider implements DataProvider {
     const { data } = await supabase().auth.getUser()
     if (!data.user) return null
     const p = await this.profile(data.user.id)
-    if (p) return p
-    // Профиль ещё не создан (например, вход через Google) — создаём на лету.
+    if (p) {
+      localStorage.removeItem(PENDING_ROLE_KEY)
+      localStorage.removeItem(GOOGLE_MODE_KEY)
+      // Аккаунт мог остаться без единого пространства (например, профиль
+      // создавали в обход приложения) — тогда заводим стартовое.
+      await this.ensureStarterSpace(p).catch(() => undefined)
+      return p
+    }
+    // Профиля нет. Если человек пришёл со вкладки «Войти», аккаунта у него
+    // действительно ещё не было — не заводим его молча, а просим зарегистрироваться.
+    if (localStorage.getItem(GOOGLE_MODE_KEY) === 'signin') {
+      localStorage.removeItem(GOOGLE_MODE_KEY)
+      await supabase().auth.signOut()
+      throw new Error(
+        'Аккаунта с этой почтой ещё нет. Перейдите на вкладку «Создать аккаунт», выберите роль и зарегистрируйтесь.',
+      )
+    }
+    localStorage.removeItem(GOOGLE_MODE_KEY)
+    // Первый вход через Google — создаём профиль на лету.
     const meta = data.user.user_metadata ?? {}
+    // Роль, выбранную на экране регистрации перед переходом в Google,
+    // держим в localStorage: через OAuth она иначе теряется.
+    const pending = localStorage.getItem(PENDING_ROLE_KEY)
+    const pendingRole: User['role'] | null =
+      pending === 'teacher' || pending === 'student' ? pending : null
     const created = unwrap(
       await supabase()
         .from('users')
@@ -120,12 +146,13 @@ export class SupabaseProvider implements DataProvider {
           id: data.user.id,
           email: data.user.email,
           name: (meta.name as string) || data.user.email?.split('@')[0] || 'Пользователь',
-          role: (meta.role as User['role']) || 'student',
+          role: (meta.role as User['role']) || pendingRole || 'student',
           avatar: (meta.avatar_url as string) ?? null,
         })
         .select()
         .single(),
     )
+    localStorage.removeItem(PENDING_ROLE_KEY)
     const user = created as unknown as User
     // Вход через Google: профиля ещё не было, значит это первая сессия —
     // заводим стартовое пространство, как при обычной регистрации.
@@ -139,7 +166,16 @@ export class SupabaseProvider implements DataProvider {
       password: input.password,
       options: { data: { name: input.name, role: input.role } },
     })
-    if (error) throw new Error(error.message)
+    if (error) {
+      const text = error.message.toLowerCase()
+      if (text.includes('already registered') || text.includes('already been registered')) {
+        throw new Error('Аккаунт с такой почтой уже есть — перейдите на вкладку «Войти»')
+      }
+      if (text.includes('rate limit')) {
+        throw new Error('Слишком много попыток подряд — подождите пару минут и попробуйте снова')
+      }
+      throw new Error(error.message)
+    }
     if (!data.user) throw new Error('Не удалось создать аккаунт')
 
     // Триггер handle_new_user создаёт строку в public.users; на случай, если
@@ -164,10 +200,31 @@ export class SupabaseProvider implements DataProvider {
       email: input.email.trim().toLowerCase(),
       password: input.password,
     })
-    if (error) throw new Error(error.message)
+    if (error) {
+      const text = error.message.toLowerCase()
+      if (text.includes('invalid login')) {
+        throw new Error(
+          'Неверная почта или пароль. Если вы заводили аккаунт через Google — войдите кнопкой «Продолжить с Google»: пароля у такого аккаунта нет, задать его можно в настройках.',
+        )
+      }
+      if (text.includes('email not confirmed')) {
+        throw new Error('Почта ещё не подтверждена — откройте письмо со ссылкой подтверждения')
+      }
+      throw new Error(error.message)
+    }
     const user = await this.getCurrentUser()
     if (!user) throw new Error('Профиль не найден')
     return user
+  }
+
+  /** Запомнить роль перед уходом на страницу Google. */
+  rememberPendingRole(role: User['role']): void {
+    localStorage.setItem(PENDING_ROLE_KEY, role)
+  }
+
+  /** Отметить, с какой вкладки уходили в Google: вход или регистрация. */
+  rememberAuthMode(mode: 'signin' | 'signup'): void {
+    localStorage.setItem(GOOGLE_MODE_KEY, mode)
   }
 
   async signInWithGoogle(redirectTo?: string): Promise<void> {
@@ -182,7 +239,37 @@ export class SupabaseProvider implements DataProvider {
     await supabase().auth.signOut()
   }
 
-  async updateProfile(patch: Partial<Pick<User, 'name' | 'avatar' | 'role'>>): Promise<User> {
+  /**
+   * Смена роли аккаунта. База разрешает её, только пока человек не состоит
+   * ни в одном чужом курсе — иначе ученик мог бы выдать себе права учителя.
+   */
+  async setRole(role: User['role']): Promise<User> {
+    const me = await this.requireUser()
+    return unwrap(
+      await supabase().from('users').update({ role }).eq('id', me.id).select().single(),
+    ) as User
+  }
+
+  /** Загрузка фото профиля: файл кладётся в публичный бакет avatars/<user_id>/… */
+  async uploadAvatar(file: File): Promise<string> {
+    const me = await this.requireUser()
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const path = `${me.id}/${Date.now()}.${ext}`
+    const { error } = await supabase()
+      .storage.from('avatars')
+      .upload(path, file, { cacheControl: '3600', upsert: true, contentType: file.type })
+    if (error) throw new Error(error.message)
+    const { data } = supabase().storage.from('avatars').getPublicUrl(path)
+    return data.publicUrl
+  }
+
+  /** Задать или сменить пароль текущему аккаунту (в том числе входившему через Google). */
+  async setPassword(password: string): Promise<void> {
+    const { error } = await supabase().auth.updateUser({ password })
+    if (error) throw new Error(error.message)
+  }
+
+  async updateProfile(patch: Partial<Pick<User, 'name' | 'avatar'>>): Promise<User> {
     const me = await this.requireUser()
     return unwrap(
       await supabase().from('users').update(patch).eq('id', me.id).select().single(),
@@ -312,6 +399,186 @@ export class SupabaseProvider implements DataProvider {
 
   /* ---------------------------------- папки ------------------------------ */
 
+
+  /* ------------------------------ обсуждения ----------------------------- */
+
+  async listComments(target: { materialId?: string; assignmentId?: string }): Promise<CommentView[]> {
+    let q = supabase().from('comments').select('*').order('created_at')
+    q = target.materialId
+      ? q.eq('material_id', target.materialId)
+      : q.eq('assignment_id', target.assignmentId ?? '')
+    const rows = unwrap(await q) as Comment[]
+    if (!rows.length) return []
+    const authors = unwrap(
+      await supabase()
+        .from('users')
+        .select('id, name, avatar')
+        .in('id', [...new Set(rows.map((c) => c.author_id))]),
+    ) as Array<Pick<User, 'id' | 'name' | 'avatar'>>
+    return rows.map((c) => ({ ...c, author: authors.find((a) => a.id === c.author_id) ?? null }))
+  }
+
+  async addComment(input: {
+    space_id: string
+    material_id?: string
+    assignment_id?: string
+    body: string
+  }): Promise<Comment> {
+    const me = await this.requireUser()
+    return unwrap(
+      await supabase()
+        .from('comments')
+        .insert({
+          space_id: input.space_id,
+          material_id: input.material_id ?? null,
+          assignment_id: input.assignment_id ?? null,
+          author_id: me.id,
+          body: input.body.trim(),
+        })
+        .select()
+        .single(),
+    ) as Comment
+  }
+
+  async deleteComment(id: string): Promise<void> {
+    const { error } = await supabase().from('comments').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+  }
+
+  /* -------------------------------- тесты -------------------------------- */
+
+  async listQuizzes(spaceId: string): Promise<QuizView[]> {
+    const me = await this.requireUser()
+    const rows = unwrap(
+      await supabase().from('quizzes').select('*').eq('space_id', spaceId).order('created_at', { ascending: false }),
+    ) as Quiz[]
+    if (!rows.length) return []
+    const ids = rows.map((q) => q.id)
+    const attempts = unwrap(
+      await supabase().from('quiz_attempts').select('*').in('quiz_id', ids),
+    ) as QuizAttempt[]
+    const questions = unwrap(
+      await supabase().from('quiz_questions').select('id, quiz_id, points').in('quiz_id', ids),
+    ) as Array<{ id: string; quiz_id: string; points: number }>
+    const studentIds = [...new Set(attempts.map((a) => a.student_id))]
+    const students = studentIds.length
+      ? ((unwrap(
+          await supabase().from('users').select('id, name, avatar').in('id', studentIds),
+        ) as Array<Pick<User, 'id' | 'name' | 'avatar'>>) ?? [])
+      : []
+    return rows.map((q) => {
+      const mine = attempts
+        .filter((a) => a.quiz_id === q.id && a.student_id === me.id)
+        .sort((a, b) => b.score - a.score)[0]
+      const qq = questions.filter((x) => x.quiz_id === q.id)
+      return {
+        ...q,
+        questions: qq.length,
+        points: qq.reduce((sum, x) => sum + x.points, 0),
+        myAttempt: mine ?? null,
+        attempts: attempts
+          .filter((a) => a.quiz_id === q.id)
+          .map((a) => ({ ...a, student: students.find((s) => s.id === a.student_id) ?? null })),
+      }
+    })
+  }
+
+  async createQuiz(input: {
+    space_id: string
+    title: string
+    description?: string | null
+    due_date?: string | null
+    attempts_allowed?: number
+  }): Promise<Quiz> {
+    const me = await this.requireUser()
+    return unwrap(
+      await supabase()
+        .from('quizzes')
+        .insert({
+          space_id: input.space_id,
+          title: input.title.trim(),
+          description: input.description ?? null,
+          due_date: input.due_date ?? null,
+          attempts_allowed: input.attempts_allowed ?? 1,
+          author_id: me.id,
+        })
+        .select()
+        .single(),
+    ) as Quiz
+  }
+
+  async updateQuiz(id: string, patch: Partial<Quiz>): Promise<Quiz> {
+    return unwrap(
+      await supabase().from('quizzes').update(patch).eq('id', id).select().single(),
+    ) as Quiz
+  }
+
+  async deleteQuiz(id: string): Promise<void> {
+    const { error } = await supabase().from('quizzes').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+  }
+
+  async listQuizEditor(quizId: string): Promise<Array<QuizQuestion & { options: QuizOption[] }>> {
+    const questions = unwrap(
+      await supabase().from('quiz_questions').select('*').eq('quiz_id', quizId).order('position'),
+    ) as QuizQuestion[]
+    if (!questions.length) return []
+    const options = unwrap(
+      await supabase()
+        .from('quiz_options')
+        .select('*')
+        .in('question_id', questions.map((q) => q.id))
+        .order('position'),
+    ) as QuizOption[]
+    return questions.map((q) => ({ ...q, options: options.filter((o) => o.question_id === q.id) }))
+  }
+
+  async saveQuizQuestions(
+    quizId: string,
+    questions: Array<{
+      text: string
+      multiple: boolean
+      points: number
+      options: Array<{ text: string; is_correct: boolean }>
+    }>,
+  ): Promise<void> {
+    // проще и надёжнее переписать набор целиком: вопросов в тесте немного
+    const { error: delErr } = await supabase().from('quiz_questions').delete().eq('quiz_id', quizId)
+    if (delErr) throw new Error(delErr.message)
+    for (const [i, q] of questions.entries()) {
+      const created = unwrap(
+        await supabase()
+          .from('quiz_questions')
+          .insert({ quiz_id: quizId, position: i, text: q.text.trim(), multiple: q.multiple, points: q.points })
+          .select()
+          .single(),
+      ) as QuizQuestion
+      const rows = q.options.map((o, k) => ({
+        question_id: created.id,
+        position: k,
+        text: o.text.trim(),
+        is_correct: o.is_correct,
+      }))
+      if (rows.length) {
+        const { error } = await supabase().from('quiz_options').insert(rows)
+        if (error) throw new Error(error.message)
+      }
+    }
+  }
+
+  async getQuizForStudent(quizId: string): Promise<QuizForStudent> {
+    const { data, error } = await supabase().rpc('get_quiz_for_student', { p_quiz: quizId })
+    if (error) throw new Error(error.message)
+    return data as QuizForStudent
+  }
+
+  async submitQuiz(quizId: string, answers: Record<string, string[]>): Promise<QuizResult> {
+    const { data, error } = await supabase().rpc('submit_quiz', { p_quiz: quizId, p_answers: answers })
+    if (error) throw new Error(error.message)
+    return data as QuizResult
+  }
+
+  /* ------------------------------- папки --------------------------------- */
   async listFolders(spaceId: string): Promise<Folder[]> {
     return unwrap(
       await supabase().from('folders').select('*').eq('space_id', spaceId).order('name'),
@@ -460,23 +727,13 @@ export class SupabaseProvider implements DataProvider {
     // supabase-js не отдаёт гранулярный прогресс, поэтому показываем
     // укрупнённые стадии — UI остаётся честным.
     onProgress?.(8)
-    const mime = resolveMime(file)
-    // Ключ только из латиницы: кириллицу в именах объектов ломают прокси и CDN
-    const path = `${spaceId}/${uid()}-${safeFileKey(file.name)}`
+    const path = `${spaceId}/${uid()}-${file.name.replace(/[^\w.\-А-Яа-яЁё]/g, '_')}`
     const timer = setInterval(() => onProgress?.(Math.min(85, 8 + Math.random() * 70)), 250)
     try {
       const { error } = await supabase()
         .storage.from(BUCKET)
-        .upload(path, file, { cacheControl: '3600', upsert: false, contentType: mime })
-      if (error) {
-        if (/exceeded the maximum allowed size|payload too large|413/i.test(error.message)) {
-          throw new Error(
-            `Файл «${file.name}» (${formatBytes(file.size)}) больше лимита хранилища. ` +
-              'Увеличьте лимит в Supabase → Storage → Settings или загрузите файл меньшего размера.',
-          )
-        }
-        throw new Error(`Не удалось загрузить «${file.name}»: ${error.message}`)
-      }
+        .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+      if (error) throw new Error(error.message)
     } finally {
       clearInterval(timer)
     }
@@ -485,7 +742,7 @@ export class SupabaseProvider implements DataProvider {
       file_url: `storage:${path}`,
       file_name: file.name,
       file_size: file.size,
-      mime_type: mime,
+      mime_type: file.type || 'application/octet-stream',
     }
   }
 
@@ -716,6 +973,66 @@ export class SupabaseProvider implements DataProvider {
   async deleteTask(id: string): Promise<void> {
     const { error } = await supabase().from('tasks').delete().eq('id', id)
     if (error) throw new Error(error.message)
+  }
+
+  /* -------------------------------- realtime ----------------------------- */
+
+  /** Присутствие: кто прямо сейчас открыл это пространство. */
+  joinPresence(
+    spaceId: string,
+    me: Pick<User, 'id' | 'name' | 'avatar'>,
+    onChange: (people: Array<Pick<User, 'id' | 'name' | 'avatar'>>) => void,
+  ): () => void {
+    const channel = supabase().channel(`space:${spaceId}`, {
+      config: { presence: { key: me.id } },
+    })
+    const collect = () => {
+      const state = channel.presenceState() as Record<string, Array<Record<string, unknown>>>
+      const people = Object.values(state)
+        .map((entries) => entries[0])
+        .filter(Boolean)
+        .map((e) => ({
+          id: String(e.id ?? ''),
+          name: String(e.name ?? 'Участник'),
+          avatar: (e.avatar as string | null) ?? null,
+        }))
+      onChange(people)
+    }
+    channel
+      .on('presence', { event: 'sync' }, collect)
+      .on('presence', { event: 'join' }, collect)
+      .on('presence', { event: 'leave' }, collect)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          void channel.track({ id: me.id, name: me.name, avatar: me.avatar })
+        }
+      })
+    return () => {
+      void channel.unsubscribe()
+    }
+  }
+
+  /** Живой обмен текстом конспекта между соавторами. */
+  joinNoteChannel(
+    materialId: string,
+    me: Pick<User, 'id' | 'name'>,
+    onRemote: (payload: { html: string; by: string; byName: string }) => void,
+  ): { send: (html: string) => void; leave: () => void } {
+    const channel = supabase().channel(`note:${materialId}`)
+    channel
+      .on('broadcast', { event: 'edit' }, ({ payload }) => {
+        const p = payload as { html: string; by: string; byName: string }
+        if (p.by !== me.id) onRemote(p)
+      })
+      .subscribe()
+    return {
+      send: (html: string) => {
+        void channel.send({ type: 'broadcast', event: 'edit', payload: { html, by: me.id, byName: me.name } })
+      },
+      leave: () => {
+        void channel.unsubscribe()
+      },
+    }
   }
 
   /* ------------------------------ журнал оценок -------------------------- */
@@ -1015,8 +1332,6 @@ export class SupabaseProvider implements DataProvider {
     if (error) throw new Error(error.message)
   }
 
-  /* -------------------------------- realtime ----------------------------- */
-
   subscribe(cb: (e: ChangeEvent) => void): () => void {
     this.listeners.add(cb)
     if (!this.realtimeReady) {
@@ -1031,6 +1346,9 @@ export class SupabaseProvider implements DataProvider {
         'tags',
         'progress',
         'starred',
+        'comments',
+        'quizzes',
+        'quiz_attempts',
       ]
       const gradebookTables = [
         'grade_scales',
@@ -1038,6 +1356,8 @@ export class SupabaseProvider implements DataProvider {
         'grade_categories',
         'grade_items',
         'grades',
+        'grade_criteria',
+        'criterion_scores',
         'attendance',
       ]
       const channel = supabase().channel('cornflow-changes')

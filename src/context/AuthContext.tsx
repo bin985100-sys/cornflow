@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { db } from '@/lib/db'
 import type { SignInInput, SignUpInput } from '@/lib/db'
-import type { Role, User } from '@/lib/types'
+import type {User } from '@/lib/types'
 
 interface AuthApi {
   user: User | null
@@ -19,8 +19,9 @@ interface AuthApi {
   signUp: (input: SignUpInput) => Promise<void>
   signOut: () => Promise<void>
   signInWithGoogle: ((redirectTo?: string) => Promise<void>) | null
-  updateProfile: (patch: Partial<Pick<User, 'name' | 'avatar' | 'role'>>) => Promise<void>
-  switchRole: (role: Role) => Promise<void>
+  updateProfile: (patch: Partial<Pick<User, 'name' | 'avatar'>>) => Promise<void>
+  /** Задать или сменить пароль; null — режим без паролей */
+  setPassword: ((password: string) => Promise<void>) | null
 }
 
 const Ctx = createContext<AuthApi | null>(null)
@@ -56,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }, [])
 
-  const updateProfile = useCallback(async (patch: Partial<Pick<User, 'name' | 'avatar' | 'role'>>) => {
+  const updateProfile = useCallback(async (patch: Partial<Pick<User, 'name' | 'avatar'>>) => {
     setUser(await db.updateProfile(patch))
   }, [])
 
@@ -69,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signUp,
       signOut,
       updateProfile,
-      switchRole: (role: Role) => updateProfile({ role }),
+      setPassword: db.setPassword ? (password: string) => db.setPassword!(password) : null,
       signInWithGoogle: db.signInWithGoogle
         ? (redirectTo?: string) => db.signInWithGoogle!(redirectTo)
         : null,

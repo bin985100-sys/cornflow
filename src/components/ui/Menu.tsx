@@ -22,11 +22,14 @@ export function Menu({
   items,
   align = 'right',
   width = 216,
+  side = 'auto',
 }: {
   trigger: (props: { open: boolean; toggle: () => void }) => ReactNode
   items: MenuItem[]
   align?: 'left' | 'right'
   width?: number
+  /** куда раскрывать список: вниз, вверх или автоматически по месту на экране */
+  side?: 'bottom' | 'top' | 'auto'
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
@@ -43,13 +46,14 @@ export function Menu({
     let left = align === 'right' ? rect.right - width : rect.left
     left = Math.min(Math.max(8, left), window.innerWidth - width - 8)
 
-    let top = rect.bottom + gap
-    // не помещается снизу — раскрываем вверх
-    if (top + height > window.innerHeight - 8) {
-      top = Math.max(8, rect.top - gap - height)
-    }
+    const below = window.innerHeight - rect.bottom
+    const dropUp =
+      side === 'top' || (side === 'auto' && below < height + gap + 8 && rect.top > below)
+
+    let top = dropUp ? rect.top - gap - height : rect.bottom + gap
+    top = Math.min(Math.max(8, top), window.innerHeight - height - 8)
     setPos({ left, top })
-  }, [align, width, items.length])
+  }, [align, width, items.length, side])
 
   useLayoutEffect(() => {
     if (open) place()

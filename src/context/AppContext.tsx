@@ -36,7 +36,20 @@ interface AppApi {
   tasks: Task[]
   loading: boolean
   bootstrapped: boolean
+  /** может добавлять и править материалы в текущем пространстве */
   canEdit: boolean
+  /** редактор курса: задания, папки, правка чужих материалов */
+  canManage: boolean
+  /** роль в текущем пространстве — она и определяет права, а не роль аккаунта */
+  spaceRole: 'teacher' | 'assistant' | 'student'
+  spaceRoleLabel: string
+  /** участники, которые прямо сейчас открыли это пространство */
+  online: Array<{ id: string; name: string; avatar: string | null }>
+  /** владелец пространства: настройки, участники, удаление */
+  isOwner: boolean
+  /** доступность разделов ученикам (владельцу видно всё) */
+  showAssignments: boolean
+  showCalendar: boolean
 
   /* обновление */
   refresh: () => Promise<void>
@@ -59,6 +72,7 @@ interface AppApi {
 const Ctx = createContext<AppApi | null>(null)
 
 const SPACE_KEY = 'cornflow.space'
+const SIDEBAR_KEY = 'cf:sidebar'
 const VIEW_KEY = 'cornflow.view'
 const SORT_KEY = 'cornflow.sort'
 
@@ -85,13 +99,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => (localStorage.getItem(SORT_KEY) as SortMode) || 'new',
   )
   const [activeTags, setActiveTags] = useState<string[]>([])
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpenState] = useState(
+    () => localStorage.getItem(SIDEBAR_KEY) !== 'closed',
+  )
+  const setSidebarOpen = useCallback((v: boolean) => {
+    // запоминаем только выбор на большом экране: на телефоне сайдбар всегда оверлей
+    if (window.innerWidth >= 1024) localStorage.setItem(SIDEBAR_KEY, v ? 'open' : 'closed')
+    setSidebarOpenState(v)
+  }, [])
+
+  const [online, setOnline] = useState<Array<{ id: string; name: string; avatar: string | null }>>([])
 
   const spaceIdRef = useRef<string | null>(spaceId)
   spaceIdRef.current = spaceId
 
   const space = useMemo(() => spaces.find((s) => s.id === spaceId) ?? spaces[0] ?? null, [spaces, spaceId])
-  const canEdit = Boolean(space && space.permission === 'edit')
+  const isOwner = Boolean(space && user && space.owner_id === user.id)
+  const canEdit = Boolean(
+    space &&
+      !space.is_locked &&
+      (isOwner || space.permission === 'edit' || space.student_upload),
+  )
+  const canManage = Boolean(space && !space.is_locked && (isOwner || space.permission === 'edit'))
+  const spaceRole: 'teacher' | 'assistant' | 'student' = isOwner
+    ? 'teacher'
+    : space?.permission === 'edit'
+      ? 'assistant'
+      : 'student'
+  const spaceRoleLabel =
+    spaceRole === 'teacher'
+      ? 'Преподаватель курса'
+      : spaceRole === 'assistant'
+        ? 'Соавтор курса'
+        : 'Ученик курса'
+  const showAssignments = Boolean(space && (isOwner || space.show_assignments))
+  const showCalendar = Boolean(space && (isOwner || space.show_calendar))
 
   const setSpaceId = useCallback((id: string) => {
     localStorage.setItem(SPACE_KEY, id)
@@ -210,6 +252,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [user, refresh, refreshSpaces])
 
+  /* Кто сейчас в этом пространстве */
+  useEffect(() => {
+    if (!user || !space || !db.joinPresence) {
+      setOnline([])
+      return
+    }
+    const off = db.joinPresence(
+      space.id,
+      { id: user.id, name: user.name, avatar: user.avatar },
+      setOnline,
+    )
+    return () => {
+      off()
+      setOnline([])
+    }
+  }, [user, space?.id])
+
   /* На мобильных сайдбар по умолчанию свёрнут */
   useEffect(() => {
     if (window.innerWidth < 1024) setSidebarOpen(false)
@@ -230,6 +289,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       loading,
       bootstrapped,
       canEdit,
+      canManage,
+      online,
+      spaceRole,
+      spaceRoleLabel,
+      isOwner,
+      showAssignments,
+      showCalendar,
       refresh,
       refreshSpaces,
       query,
@@ -258,6 +324,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       loading,
       bootstrapped,
       canEdit,
+      canManage,
+      online,
+      spaceRole,
+      spaceRoleLabel,
+      isOwner,
+      showAssignments,
+      showCalendar,
       refresh,
       refreshSpaces,
       query,

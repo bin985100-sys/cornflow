@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Plus } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
 import { useGradebook } from '@/hooks/useGradebook'
-import { useAuth } from '@/context/AuthContext'
 import { useCreate } from '@/context/CreateContext'
 import type { CalendarEvent } from '@/lib/types'
 import {
@@ -22,9 +21,8 @@ import { EmptyState, EventChip, Segmented } from '@/components/ui/primitives'
 type Mode = 'month' | 'week'
 
 export function CalendarPage() {
-  const { allAssignments, tasks, spaces, loading } = useApp()
+  const { allAssignments, tasks, spaces, loading, canManage, showCalendar } = useApp()
   const gb = useGradebook()
-  const { isTeacher } = useAuth()
   const create = useCreate()
   const [cursor, setCursor] = useState(() => new Date())
   const [mode, setMode] = useState<Mode>('month')
@@ -89,6 +87,18 @@ export function CalendarPage() {
   const selectedEvents = eventsOn(selected)
   const today = startOfDay(new Date())
 
+  if (!showCalendar) {
+    return (
+      <div className="mx-auto max-w-[1400px] px-5 py-6 lg:px-8">
+        <EmptyState
+          art="search"
+          title="Календарь скрыт"
+          description="Преподаватель временно закрыл этот раздел в настройках пространства."
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto max-w-[1400px] space-y-5 px-5 py-6 lg:px-8">
       <header className="flex flex-wrap items-center justify-between gap-3">
@@ -96,9 +106,7 @@ export function CalendarPage() {
           <h1 className="text-[26px] font-bold tracking-[-0.02em]">
             {MONTHS_NOM[cursor.getMonth()]} {cursor.getFullYear()}
           </h1>
-          <p className="mt-0.5 text-[13px] text-ink-3">
-            Дедлайны заданий, работы журнала и личные задачи
-          </p>
+          <p className="mt-0.5 text-[13px] text-ink-3">Дедлайны заданий и личные задачи</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -221,18 +229,16 @@ export function CalendarPage() {
                     <EventChip icon={CalendarDays} color="blue">
                       {e.kind === 'assignment' ? 'Дедлайн' : e.kind === 'grade' ? 'Работа в журнале' : 'Задача'}
                     </EventChip>
-                    {e.kind !== 'grade' && (
-                      <EventChip icon={Clock} color="purple">
-                        {formatTime(e.date)}
-                      </EventChip>
-                    )}
+                    <EventChip icon={Clock} color="purple">
+                      {formatTime(e.date)}
+                    </EventChip>
                   </div>
                 </button>
               ))}
             </div>
           </div>
 
-          {isTeacher && (
+          {canManage && (
             <button className="cf-btn-brand w-full" onClick={create.newAssignment}>
               <Plus size={16} /> Новое задание
             </button>

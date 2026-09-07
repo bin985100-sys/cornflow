@@ -227,6 +227,48 @@
 }
 
 @layer utilities {
+  /* Плавное переключение темы: класс висит на <html> доли секунды */
+  html.cf-theme-switching,
+  html.cf-theme-switching * {
+    transition:
+      background-color 0.28s ease,
+      border-color 0.28s ease,
+      color 0.28s ease,
+      fill 0.28s ease,
+      box-shadow 0.28s ease !important;
+  }
+
+  /* Поочерёдное появление элементов списка */
+  .cf-stagger > * {
+    animation: fade-up 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .cf-stagger > *:nth-child(1) { animation-delay: 0.02s; }
+  .cf-stagger > *:nth-child(2) { animation-delay: 0.06s; }
+  .cf-stagger > *:nth-child(3) { animation-delay: 0.1s; }
+  .cf-stagger > *:nth-child(4) { animation-delay: 0.14s; }
+  .cf-stagger > *:nth-child(5) { animation-delay: 0.18s; }
+  .cf-stagger > *:nth-child(6) { animation-delay: 0.22s; }
+  .cf-stagger > *:nth-child(7) { animation-delay: 0.26s; }
+  .cf-stagger > *:nth-child(8) { animation-delay: 0.3s; }
+  .cf-stagger > *:nth-child(n + 9) { animation-delay: 0.34s; }
+
+  /* Мягкий подъём при наведении — для карточек и строк списка */
+  .cf-lift {
+    @apply transition-[transform,box-shadow,border-color] duration-300 ease-out;
+  }
+  .cf-lift:hover {
+    transform: translateY(-2px);
+    @apply shadow-lift;
+  }
+  .cf-lift:active {
+    transform: translateY(0) scale(0.995);
+  }
+
+  /* Нажатие на строку/пункт меню */
+  .cf-press {
+    @apply transition duration-200 ease-out active:scale-[0.98];
+  }
+
   .cf-no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -244,10 +286,24 @@
 
   @media (prefers-reduced-motion: reduce) {
     .cf-hoverable,
+    .cf-lift,
+    .cf-press,
+    .cf-stagger > *,
     .animate-fade-up,
     .animate-scale-in,
-    .animate-fade-in {
+    .animate-fade-in,
+    .animate-page,
+    .animate-pop,
+    .animate-toast-in,
+    .animate-slide-left,
+    .animate-slide-right,
+    .animate-check-pop,
+    .animate-pulse-soft {
       animation: none !important;
+      transition: none !important;
+    }
+    html.cf-theme-switching,
+    html.cf-theme-switching * {
       transition: none !important;
     }
   }

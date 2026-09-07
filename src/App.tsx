@@ -6,12 +6,13 @@ import { CreateProvider } from '@/context/CreateContext'
 import { ToastProvider } from '@/context/ToastContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Logo } from '@/components/layout/Logo'
+import { QuizzesPage } from '@/pages/QuizzesPage'
 import { AssignmentsPage } from '@/pages/AssignmentsPage'
 import { AuthPage } from '@/pages/AuthPage'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { DashboardPage } from '@/pages/DashboardPage'
-import { GradebookPage } from '@/pages/GradebookPage'
 import { JoinPage } from '@/pages/JoinPage'
+import { GradebookPage } from '@/pages/GradebookPage'
 import { LandingPage } from '@/pages/LandingPage'
 import { LibraryPage } from '@/pages/LibraryPage'
 import { ProgressPage } from '@/pages/ProgressPage'
@@ -65,6 +66,7 @@ function Shell() {
         <Route index element={<DashboardPage />} />
         <Route path="library" element={<LibraryPage />} />
         <Route path="assignments" element={<AssignmentsPage />} />
+        <Route path="quizzes" element={<QuizzesPage />} />
         <Route path="gradebook" element={<GradebookPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="calendar" element={<CalendarPage />} />

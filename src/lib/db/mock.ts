@@ -26,28 +26,25 @@ import type {
   Tag,
   Task,
   User,
+  Comment,
+  CommentView,
+  Quiz,
+  QuizAttempt,
+  QuizForStudent,
+  QuizOption,
+  QuizQuestion,
+  QuizResult,
+  QuizView,
 } from '../types'
-import {
-  colorFromString,
-  formatBytes,
-  inviteCode,
-  nowIso,
-  resolveMime,
-  safeFileKey,
-  uid,
-} from '../utils'
+import { colorFromString, inviteCode, nowIso, uid } from '../utils'
+import { DEFAULT_CATEGORIES, defaultPeriods, presetByKey } from '../grading'
 import { blobUrl, deleteBlob, putBlob } from './idb'
-import {
-  DEFAULT_CATEGORIES,
-  defaultPeriods,
-  presetByKey,
-} from '../grading'
 import type {
   ChangeEvent,
   CreateAssignmentInput,
   CreateFolderInput,
-  CreateMaterialInput,
   CreateGradeItemInput,
+  CreateMaterialInput,
   CreateSpaceInput,
   DataProvider,
   GradeInput,
@@ -76,6 +73,10 @@ interface MockDB {
   starred: Starred[]
   tasks: Task[]
   progress: Progress[]
+  comments: Comment[]
+  quizzes: Quiz[]
+  quiz_questions: Array<QuizQuestion & { options: QuizOption[] }>
+  quiz_attempts: QuizAttempt[]
   grade_scales: GradeScale[]
   grade_periods: GradePeriod[]
   grade_categories: GradeCategory[]
@@ -101,6 +102,10 @@ function emptyDb(): MockDB {
     starred: [],
     tasks: [],
     progress: [],
+    comments: [],
+    quizzes: [],
+    quiz_questions: [],
+    quiz_attempts: [],
     grade_scales: [],
     grade_periods: [],
     grade_categories: [],
@@ -297,7 +302,35 @@ export class MockProvider implements DataProvider {
     this.authListeners.forEach((cb) => cb(null))
   }
 
-  async updateProfile(patch: Partial<Pick<User, 'name' | 'avatar' | 'role'>>): Promise<User> {
+  async setRole(role: User['role']): Promise<User> {
+    const me = this.me()
+    const inOther = this.db.space_members.some(
+      (m) =>
+        m.user_id === me.id &&
+        this.db.spaces.find((s) => s.id === m.space_id)?.owner_id !== me.id,
+    )
+    if (inOther) {
+      throw new Error('Роль нельзя сменить: вы состоите в чужом курсе')
+    }
+    me.role = role
+    this.persist({ table: 'spaces' })
+    const { password: _pw, ...rest } = me
+    void _pw
+    this.authListeners.forEach((cb) => cb(rest))
+    return rest
+  }
+
+  /** В локальном режиме фото хранится прямо в профиле как data-URL. */
+  async uploadAvatar(file: File): Promise<string> {
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(new Error('Не удалось прочитать файл'))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async updateProfile(patch: Partial<Pick<User, 'name' | 'avatar'>>): Promise<User> {
     const me = this.me()
     Object.assign(me, patch)
     this.persist({ table: 'spaces' })
@@ -354,6 +387,12 @@ export class MockProvider implements DataProvider {
       owner_id: me.id,
       color: input.color ?? colorFromString(input.name),
       invite_code: inviteCode(),
+      join_open: true,
+      is_locked: false,
+      student_upload: false,
+      show_assignments: true,
+      show_calendar: true,
+      show_members: true,
       created_at: nowIso(),
     }
     this.db.spaces.push(space)
@@ -391,17 +430,15 @@ export class MockProvider implements DataProvider {
     this.db.submissions = this.db.submissions.filter((s) => !assignmentIds.includes(s.assignment_id))
     this.db.starred = this.db.starred.filter((s) => !materialIds.includes(s.material_id))
     this.db.progress = this.db.progress.filter((p) => !materialIds.includes(p.material_id))
-    const itemIds = this.db.grade_items.filter((i) => i.space_id === id).map((i) => i.id)
+    const gItemIds = this.db.grade_items.filter((i) => i.space_id === id).map((i) => i.id)
+    const gCritIds = this.db.grade_criteria.filter((c) => c.space_id === id).map((c) => c.id)
     this.db.grade_items = this.db.grade_items.filter((i) => i.space_id !== id)
-    this.db.grades = this.db.grades.filter((g) => !itemIds.includes(g.item_id))
+    this.db.grades = this.db.grades.filter((g) => !gItemIds.includes(g.item_id))
+    this.db.grade_criteria = this.db.grade_criteria.filter((c) => c.space_id !== id)
+    this.db.criterion_scores = this.db.criterion_scores.filter((cs) => !gCritIds.includes(cs.criterion_id))
     this.db.grade_scales = this.db.grade_scales.filter((x) => x.space_id !== id)
     this.db.grade_periods = this.db.grade_periods.filter((x) => x.space_id !== id)
     this.db.grade_categories = this.db.grade_categories.filter((x) => x.space_id !== id)
-    const criterionIds = this.db.grade_criteria.filter((c) => c.space_id === id).map((c) => c.id)
-    this.db.grade_criteria = this.db.grade_criteria.filter((c) => c.space_id !== id)
-    this.db.criterion_scores = this.db.criterion_scores.filter(
-      (cs) => !criterionIds.includes(cs.criterion_id),
-    )
     this.db.attendance = this.db.attendance.filter((x) => x.space_id !== id)
     this.persist({ table: 'spaces' })
   }
@@ -451,6 +488,235 @@ export class MockProvider implements DataProvider {
   }
 
   /* ---------------------------------- папки ------------------------------ */
+
+
+  /* ------------------------------ обсуждения ----------------------------- */
+
+  async listComments(target: { materialId?: string; assignmentId?: string }): Promise<CommentView[]> {
+    const rows = this.db.comments
+      .filter((c) =>
+        target.materialId ? c.material_id === target.materialId : c.assignment_id === target.assignmentId,
+      )
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    return delay(
+      rows.map((c) => {
+        const u = this.db.users.find((x) => x.id === c.author_id)
+        return {
+          ...c,
+          author: u ? { id: u.id, name: u.name, avatar: u.avatar } : null,
+        }
+      }),
+      40,
+    )
+  }
+
+  async addComment(input: {
+    space_id: string
+    material_id?: string
+    assignment_id?: string
+    body: string
+  }): Promise<Comment> {
+    const me = this.me()
+    this.assertSpaceAccess(input.space_id)
+    const comment: Comment = {
+      id: uid('cmt'),
+      space_id: input.space_id,
+      material_id: input.material_id ?? null,
+      assignment_id: input.assignment_id ?? null,
+      author_id: me.id,
+      body: input.body.trim(),
+      created_at: nowIso(),
+    }
+    this.db.comments.push(comment)
+    this.persist({ table: 'materials', spaceId: input.space_id })
+    return comment
+  }
+
+  async deleteComment(id: string): Promise<void> {
+    const me = this.me()
+    const c = this.db.comments.find((x) => x.id === id)
+    if (!c) return
+    const space = this.db.spaces.find((s) => s.id === c.space_id)
+    if (c.author_id !== me.id && space?.owner_id !== me.id) {
+      throw new Error('Можно удалять только свои комментарии')
+    }
+    this.db.comments = this.db.comments.filter((x) => x.id !== id)
+    this.persist({ table: 'materials', spaceId: c.space_id })
+  }
+
+  /* -------------------------------- тесты -------------------------------- */
+
+  async listQuizzes(spaceId: string): Promise<QuizView[]> {
+    const me = this.me()
+    const canManage = this.db.spaces.find((s) => s.id === spaceId)?.owner_id === me.id
+    return delay(
+      this.db.quizzes
+        .filter((q) => q.space_id === spaceId && (q.published || canManage))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .map((q) => {
+          const qq = this.db.quiz_questions.filter((x) => x.quiz_id === q.id)
+          const attempts = this.db.quiz_attempts.filter((a) => a.quiz_id === q.id)
+          const mine = attempts
+            .filter((a) => a.student_id === me.id)
+            .sort((a, b) => b.score - a.score)[0]
+          return {
+            ...q,
+            questions: qq.length,
+            points: qq.reduce((sum, x) => sum + x.points, 0),
+            myAttempt: mine ?? null,
+            attempts: attempts.map((a) => {
+              const u = this.db.users.find((x) => x.id === a.student_id)
+              return { ...a, student: u ? { id: u.id, name: u.name, avatar: u.avatar } : null }
+            }),
+          }
+        }),
+      60,
+    )
+  }
+
+  async createQuiz(input: {
+    space_id: string
+    title: string
+    description?: string | null
+    due_date?: string | null
+    attempts_allowed?: number
+  }): Promise<Quiz> {
+    const me = this.me()
+    this.assertSpaceAccess(input.space_id, true)
+    const quiz: Quiz = {
+      id: uid('quiz'),
+      space_id: input.space_id,
+      title: input.title.trim(),
+      description: input.description ?? null,
+      due_date: input.due_date ?? null,
+      attempts_allowed: input.attempts_allowed ?? 1,
+      shuffle: true,
+      published: false,
+      author_id: me.id,
+      created_at: nowIso(),
+    }
+    this.db.quizzes.push(quiz)
+    this.persist({ table: 'assignments', spaceId: input.space_id })
+    return quiz
+  }
+
+  async updateQuiz(id: string, patch: Partial<Quiz>): Promise<Quiz> {
+    const q = this.db.quizzes.find((x) => x.id === id)
+    if (!q) throw new Error('Тест не найден')
+    this.assertSpaceAccess(q.space_id, true)
+    Object.assign(q, patch)
+    this.persist({ table: 'assignments', spaceId: q.space_id })
+    return q
+  }
+
+  async deleteQuiz(id: string): Promise<void> {
+    const q = this.db.quizzes.find((x) => x.id === id)
+    if (!q) return
+    this.assertSpaceAccess(q.space_id, true)
+    this.db.quizzes = this.db.quizzes.filter((x) => x.id !== id)
+    this.db.quiz_questions = this.db.quiz_questions.filter((x) => x.quiz_id !== id)
+    this.db.quiz_attempts = this.db.quiz_attempts.filter((x) => x.quiz_id !== id)
+    this.persist({ table: 'assignments', spaceId: q.space_id })
+  }
+
+  async listQuizEditor(quizId: string): Promise<Array<QuizQuestion & { options: QuizOption[] }>> {
+    return delay(
+      this.db.quiz_questions
+        .filter((q) => q.quiz_id === quizId)
+        .sort((a, b) => a.position - b.position),
+      40,
+    )
+  }
+
+  async saveQuizQuestions(
+    quizId: string,
+    questions: Array<{
+      text: string
+      multiple: boolean
+      points: number
+      options: Array<{ text: string; is_correct: boolean }>
+    }>,
+  ): Promise<void> {
+    const q = this.db.quizzes.find((x) => x.id === quizId)
+    if (!q) throw new Error('Тест не найден')
+    this.assertSpaceAccess(q.space_id, true)
+    this.db.quiz_questions = this.db.quiz_questions.filter((x) => x.quiz_id !== quizId)
+    questions.forEach((question, i) => {
+      const qid = uid('qq')
+      this.db.quiz_questions.push({
+        id: qid,
+        quiz_id: quizId,
+        position: i,
+        text: question.text.trim(),
+        multiple: question.multiple,
+        points: question.points,
+        options: question.options.map((o, k) => ({
+          id: uid('qo'),
+          question_id: qid,
+          position: k,
+          text: o.text.trim(),
+          is_correct: o.is_correct,
+        })),
+      })
+    })
+    this.persist({ table: 'assignments', spaceId: q.space_id })
+  }
+
+  async getQuizForStudent(quizId: string): Promise<QuizForStudent> {
+    const me = this.me()
+    const q = this.db.quizzes.find((x) => x.id === quizId)
+    if (!q) throw new Error('Тест не найден')
+    return {
+      id: q.id,
+      title: q.title,
+      description: q.description,
+      due_date: q.due_date,
+      attempts_allowed: q.attempts_allowed,
+      attempts_used: this.db.quiz_attempts.filter((a) => a.quiz_id === q.id && a.student_id === me.id).length,
+      questions: this.db.quiz_questions
+        .filter((x) => x.quiz_id === quizId)
+        .sort((a, b) => a.position - b.position)
+        .map((x) => ({
+          id: x.id,
+          text: x.text,
+          multiple: x.multiple,
+          points: x.points,
+          options: x.options.map((o) => ({ id: o.id, text: o.text })),
+        })),
+    }
+  }
+
+  async submitQuiz(quizId: string, answers: Record<string, string[]>): Promise<QuizResult> {
+    const me = this.me()
+    const q = this.db.quizzes.find((x) => x.id === quizId)
+    if (!q) throw new Error('Тест не найден')
+    const used = this.db.quiz_attempts.filter((a) => a.quiz_id === q.id && a.student_id === me.id).length
+    if (used >= q.attempts_allowed) throw new Error(`Попытки закончились: разрешено ${q.attempts_allowed}`)
+
+    let score = 0
+    let max = 0
+    for (const question of this.db.quiz_questions.filter((x) => x.quiz_id === quizId)) {
+      max += question.points
+      const chosen = [...(answers[question.id] ?? [])].sort()
+      const correct = question.options.filter((o) => o.is_correct).map((o) => o.id).sort()
+      if (correct.length && chosen.length === correct.length && chosen.every((id, i) => id === correct[i])) {
+        score += question.points
+      }
+    }
+    const late = Boolean(q.due_date && new Date() > new Date(q.due_date))
+    this.db.quiz_attempts.push({
+      id: uid('qa'),
+      quiz_id: quizId,
+      student_id: me.id,
+      answers,
+      score,
+      max_score: max,
+      is_late: late,
+      created_at: nowIso(),
+    })
+    this.persist({ table: 'assignments', spaceId: q.space_id })
+    return { score, max_score: max, is_late: late, attempts_left: q.attempts_allowed - used - 1 }
+  }
 
   async listFolders(spaceId: string): Promise<Folder[]> {
     return delay(
@@ -611,36 +877,20 @@ export class MockProvider implements DataProvider {
     onProgress?: (pct: number) => void,
   ): Promise<UploadResult> {
     this.assertSpaceAccess(spaceId, true)
-    const mime = resolveMime(file)
-    // Ключ хранит настоящее расширение — по нему восстанавливается MIME
-    const key = `${spaceId}/${uid()}-${safeFileKey(file.name)}`
-
+    const key = `${spaceId}/${uid()}-${file.name}`
     // Имитируем прогресс загрузки, чтобы прогресс-бар был честным элементом UI
     const steps = 12
     for (let i = 1; i <= steps; i++) {
       await new Promise((r) => setTimeout(r, 25 + Math.random() * 35))
       onProgress?.(Math.round((i / steps) * 92))
     }
-
-    try {
-      await putBlob(key, file, mime)
-    } catch (e) {
-      const message = e instanceof Error ? e.message : ''
-      if (/quota|space|storage/i.test(message)) {
-        throw new Error(
-          `Файл «${file.name}» (${formatBytes(file.size)}) не поместился в хранилище браузера. ` +
-            'Освободите место, удалив ненужные материалы, или подключите Supabase — там лимит на файл гораздо больше.',
-        )
-      }
-      throw new Error(`Не удалось сохранить файл «${file.name}»: ${message || 'ошибка хранилища'}`)
-    }
-
+    await putBlob(key, file)
     onProgress?.(100)
     return {
       file_url: `idb:${key}`,
       file_name: file.name,
       file_size: file.size,
-      mime_type: mime,
+      mime_type: file.type || 'application/octet-stream',
     }
   }
 
@@ -781,6 +1031,7 @@ export class MockProvider implements DataProvider {
       title: input.title.trim(),
       description: input.description ?? null,
       due_date: input.due_date ?? null,
+      allow_late: input.allow_late ?? true,
       attachments: input.attachments ?? [],
       author_id: me.id,
       created_at: nowIso(),
@@ -816,8 +1067,15 @@ export class MockProvider implements DataProvider {
     const assignment = this.db.assignments.find((a) => a.id === assignmentId)
     if (!assignment) throw new Error('Задание не найдено')
     this.assertSpaceAccess(assignment.space_id)
-    let sub = this.db.submissions.find((s) => s.assignment_id === assignmentId && s.student_id === me.id)
-    if (!sub) {
+    const late = Boolean(assignment.due_date && new Date() > new Date(assignment.due_date))
+    if (late && !assignment.allow_late) {
+      throw new Error('Срок сдачи истёк — преподаватель закрыл приём работ')
+    }
+    const existing = this.db.submissions.find(
+      (s) => s.assignment_id === assignmentId && s.student_id === me.id,
+    )
+    let sub: Submission
+    if (!existing) {
       sub = {
         id: uid('sub'),
         assignment_id: assignmentId,
@@ -827,13 +1085,16 @@ export class MockProvider implements DataProvider {
         attachments: payload.attachments ?? [],
         grade: null,
         submitted_at: nowIso(),
+        is_late: late,
       }
       this.db.submissions.push(sub)
     } else {
-      sub.status = 'submitted'
-      sub.comment = payload.comment ?? sub.comment
-      sub.attachments = payload.attachments ?? sub.attachments
-      sub.submitted_at = nowIso()
+      existing.status = 'submitted'
+      existing.comment = payload.comment ?? existing.comment
+      existing.attachments = payload.attachments ?? existing.attachments
+      existing.submitted_at = nowIso()
+      existing.is_late = late
+      sub = existing
     }
     this.persist({ table: 'submissions', spaceId: assignment.space_id })
     return sub

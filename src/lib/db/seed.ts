@@ -32,6 +32,12 @@ export function personalSpace(user: User): { space: Space; member: SpaceMember }
     owner_id: user.id,
     color: user.role === 'teacher' ? 'blue' : 'purple',
     invite_code: inviteCode(),
+      join_open: true,
+      is_locked: false,
+      student_upload: false,
+      show_assignments: true,
+      show_calendar: true,
+      show_members: true,
     created_at,
   }
   return {

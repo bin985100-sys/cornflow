@@ -4,6 +4,7 @@ import {
   ArrowDownWideNarrow,
   Bell,
   Command,
+  Home,
   LayoutGrid,
   List,
   Menu as MenuIcon,
@@ -21,6 +22,7 @@ const TITLES: Record<string, string> = {
   '/app': 'Дашборд',
   '/app/library': 'Все материалы',
   '/app/assignments': 'Задания',
+  '/app/quizzes': 'Тесты',
   '/app/tasks': 'Задачи',
   '/app/calendar': 'Календарь',
   '/app/starred': 'Избранное',
@@ -96,9 +98,10 @@ export function Topbar() {
     <header className="sticky top-0 z-20 border-b border-line bg-surface/85 backdrop-blur-xl lg:rounded-t-[26px]">
       <div className="flex h-[64px] items-center gap-3 px-4 lg:px-5">
         <button
-          className="cf-icon-btn lg:hidden"
+          className={cx('cf-icon-btn', sidebarOpen && 'lg:hidden')}
           onClick={() => setSidebarOpen(!sidebarOpen)}
-          aria-label="Меню"
+          aria-label={sidebarOpen ? 'Свернуть боковую панель' : 'Развернуть боковую панель'}
+          title={sidebarOpen ? 'Свернуть панель' : 'Развернуть панель'}
         >
           <MenuIcon size={17} />
         </button>
@@ -209,6 +212,15 @@ export function Topbar() {
 
         {/* правые контролы */}
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            className="cf-icon-btn"
+            onClick={() => navigate('/')}
+            title="На главную страницу сайта"
+            aria-label="На главную страницу сайта"
+          >
+            <Home size={16} />
+          </button>
+
           {showViewControls && (
             <>
               <div className="hidden sm:block">

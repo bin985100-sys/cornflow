@@ -107,7 +107,7 @@ export function TasksPage() {
             return (
               <li
                 key={t.id}
-                className="group flex animate-fade-in items-center gap-3 px-4 py-3 transition duration-200 hover:bg-surface-2"
+                className="group flex animate-fade-up items-center gap-3 px-4 py-3 transition-[background-color,opacity] duration-300 hover:bg-surface-2"
               >
                 <input
                   type="checkbox"
@@ -120,12 +120,12 @@ export function TasksPage() {
                       toast.error(e)
                     }
                   }}
-                  className="h-[18px] w-[18px] shrink-0 accent-[rgb(var(--cf-brand))]"
+                  className="h-[18px] w-[18px] shrink-0 cursor-pointer accent-[rgb(var(--cf-brand))] transition-transform duration-200 checked:animate-check-pop hover:scale-110 active:scale-90"
                 />
                 <span
                   className={cx(
-                    'min-w-0 flex-1 text-[14px]',
-                    t.done ? 'text-ink-3 line-through' : 'text-ink',
+                    'min-w-0 flex-1 text-[14px] transition-[color,opacity] duration-300',
+                    t.done ? 'text-ink-3 line-through opacity-70' : 'text-ink',
                   )}
                 >
                   {t.title}

@@ -2,7 +2,6 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock,
-  GraduationCap,
   MapPin,
   Paperclip,
   Repeat,
@@ -132,17 +131,8 @@ export function CalendarChip({
   onClick?: () => void
   kind?: 'assignment' | 'task' | 'grade'
 }) {
-  const color =
-    kind === 'grade'
-      ? 'purple'
-      : tone === 'late'
-        ? 'red'
-        : tone === 'soon'
-          ? 'orange'
-          : kind === 'task'
-            ? 'green'
-            : 'blue'
-  const Icon = kind === 'grade' ? GraduationCap : kind === 'task' ? CheckCircle2 : kind === 'assignment' ? MapPin : Video
+  const color = tone === 'late' ? 'red' : tone === 'soon' ? 'orange' : kind === 'task' ? 'green' : 'blue'
+  const Icon = kind === 'task' ? CheckCircle2 : kind === 'assignment' ? MapPin : Video
   return (
     <button
       onClick={(e) => {

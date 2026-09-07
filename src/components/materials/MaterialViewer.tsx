@@ -24,6 +24,7 @@ import {
   mimeByName,
 } from '@/lib/utils'
 import { Modal } from '@/components/ui/Modal'
+import { CommentThread } from '@/components/comments/CommentThread'
 import { Avatar, TagPill } from '@/components/ui/primitives'
 import { useToast } from '@/context/ToastContext'
 
@@ -166,6 +167,10 @@ export function MaterialViewer({
       }
     >
       <Body material={material} url={url} loading={loading} />
+
+      <div className="mx-auto mt-8 max-w-3xl border-t border-line pt-6">
+        <CommentThread materialId={material.id} />
+      </div>
     </Modal>
   )
 }

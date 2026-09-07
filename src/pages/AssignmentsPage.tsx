@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
-import { useAuth } from '@/context/AuthContext'
 import { useCreate } from '@/context/CreateContext'
 import { dueLabel, normalize, plural } from '@/lib/utils'
 import { AssignmentCard } from '@/components/assignments/AssignmentCard'
@@ -10,8 +9,7 @@ import { CardSkeletonGrid, EmptyState, Segmented } from '@/components/ui/primiti
 type Filter = 'all' | 'upcoming' | 'done' | 'late'
 
 export function AssignmentsPage() {
-  const { assignments, loading, canEdit, query, space } = useApp()
-  const { isTeacher } = useAuth()
+  const { assignments, loading, canManage, showAssignments, query, space } = useApp()
   const create = useCreate()
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -27,12 +25,24 @@ export function AssignmentsPage() {
         case 'late':
           return due.tone === 'late' && !submitted
         case 'done':
-          return isTeacher ? a.submissions.some((s) => s.status !== 'assigned') : submitted
+          return canManage ? a.submissions.some((s) => s.status !== 'assigned') : submitted
         default:
           return true
       }
     })
-  }, [assignments, query, filter, isTeacher])
+  }, [assignments, query, filter, canManage])
+
+  if (!showAssignments) {
+    return (
+      <div className="mx-auto max-w-[1400px] px-5 py-6 lg:px-8">
+        <EmptyState
+          art="search"
+          title="Задания скрыты"
+          description="Преподаватель временно закрыл этот раздел в настройках пространства."
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5 px-5 py-6 lg:px-8">
@@ -52,10 +62,10 @@ export function AssignmentsPage() {
               { value: 'all', label: 'Все' },
               { value: 'upcoming', label: 'Скоро' },
               { value: 'late', label: 'Просрочено' },
-              { value: 'done', label: isTeacher ? 'Есть сдачи' : 'Сдано' },
+              { value: 'done', label: canManage ? 'Есть сдачи' : 'Сдано' },
             ]}
           />
-          {canEdit && isTeacher && (
+          {canManage && (
             <button className="cf-btn-brand" onClick={create.newAssignment}>
               <Plus size={17} strokeWidth={2.6} /> Задание
             </button>
@@ -70,12 +80,12 @@ export function AssignmentsPage() {
           art="calendar"
           title={filter === 'all' ? 'Заданий пока нет' : 'Ничего не подходит под фильтр'}
           description={
-            isTeacher
+            canManage
               ? 'Создайте задание с дедлайном и прикрепите к нему материалы — ученики увидят его в календаре.'
               : 'Как только преподаватель добавит задание, оно появится здесь и в календаре.'
           }
           action={
-            canEdit && isTeacher ? (
+            canManage ? (
               <button className="cf-btn-brand" onClick={create.newAssignment}>
                 Создать задание
               </button>
@@ -89,7 +99,7 @@ export function AssignmentsPage() {
               key={a.id}
               assignment={a}
               index={i}
-              isTeacher={isTeacher}
+              isTeacher={canManage}
               onOpen={() => create.openAssignment(a)}
             />
           ))}

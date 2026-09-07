@@ -33,8 +33,8 @@ function greeting(): string {
 }
 
 export function DashboardPage() {
-  const { space, materials, assignments, tasks, loading, canEdit, refresh } = useApp()
-  const { user, isTeacher } = useAuth()
+  const { space, materials, assignments, tasks, loading, canEdit, canManage, refresh } = useApp()
+  const { user } = useAuth()
   const create = useCreate()
   const toast = useToast()
 
@@ -92,7 +92,7 @@ export function DashboardPage() {
             {greeting()}, {user?.name.split(' ')[0]}
           </h1>
           <p className="mt-1.5 text-[14.5px] text-ink-2">
-            {isTeacher
+            {canManage
               ? `В пространстве ${plural(materials.length, 'материал', 'материала', 'материалов')} и ${plural(assignments.length, 'задание', 'задания', 'заданий')}.`
               : `Изучено ${studied} из ${materials.length} материалов. ${upcoming.length ? `Ближайших дедлайнов: ${upcoming.length}.` : 'Дедлайнов пока нет.'}`}
           </p>
@@ -100,19 +100,21 @@ export function DashboardPage() {
 
         {/* ------------------------- быстрые действия ------------------------ */}
         {canEdit && (
-          <div className="flex flex-wrap gap-2.5">
+          <div className="cf-stagger flex flex-wrap gap-2.5">
             <QuickAction icon={FileUp} label="Загрузить файлы" onClick={() => create.newMaterial({ kind: 'file' })} color="blue" />
             <QuickAction icon={Notebook} label="Написать конспект" onClick={() => create.newMaterial({ kind: 'note' })} color="yellow" />
             <QuickAction icon={Link2} label="Добавить ссылку" onClick={() => create.newMaterial({ kind: 'link' })} color="green" />
-            <QuickAction icon={FolderPlus} label="Новая папка" onClick={() => create.newFolder(null)} color="purple" />
-            {isTeacher && (
+            {canManage && (
+              <QuickAction icon={FolderPlus} label="Новая папка" onClick={() => create.newFolder(null)} color="purple" />
+            )}
+            {canManage && (
               <QuickAction icon={ClipboardList} label="Новое задание" onClick={create.newAssignment} color="red" />
             )}
           </div>
         )}
 
         {/* ------------------------------ статистика -------------------------- */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="cf-stagger grid grid-cols-2 gap-4 lg:grid-cols-4">
           {stats.map((s, i) => {
             const palette = cardPalette[s.color]
             return (
@@ -140,7 +142,7 @@ export function DashboardPage() {
         <GradebookWidget />
 
         {/* ------------------------- прогресс изучения ------------------------ */}
-        {!isTeacher && materials.length > 0 && (
+        {!canManage && materials.length > 0 && (
           <section className="cf-card animate-fade-up p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="flex items-center gap-2 text-[15px]">
@@ -165,7 +167,7 @@ export function DashboardPage() {
                   key={a.id}
                   assignment={a}
                   index={i}
-                  isTeacher={isTeacher}
+                  isTeacher={canManage}
                   onOpen={() => create.openAssignment(a)}
                 />
               ))}
@@ -271,14 +273,14 @@ function QuickAction({
   return (
     <button
       onClick={onClick}
-      className="cf-hoverable flex items-center gap-2.5 rounded-pill border px-4 py-2.5 text-[13.5px] font-medium shadow-card"
+      className="cf-hoverable group flex items-center gap-2.5 rounded-pill border px-4 py-2.5 text-[13.5px] font-medium shadow-card active:scale-95"
       style={{
         background: palette.bg,
         borderColor: `color-mix(in srgb, ${palette.accent} 24%, transparent)`,
         color: palette.accent,
       }}
     >
-      <Icon size={16} />
+      <Icon size={16} className="transition-transform duration-300 ease-out group-hover:rotate-6 group-hover:scale-110" />
       {label}
     </button>
   )

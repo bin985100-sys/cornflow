@@ -6,9 +6,9 @@ import { MATERIAL_ICON } from '@/lib/icons'
 import { cardPalette, cx, formatDateFull, toDateInput } from '@/lib/utils'
 import { useApp } from '@/context/AppContext'
 import { useGradebook } from '@/hooks/useGradebook'
-import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { Modal } from '@/components/ui/Modal'
+import { CommentThread } from '@/components/comments/CommentThread'
 import { Avatar } from '@/components/ui/primitives'
 import { AssignmentChips } from '@/components/assignments/AssignmentCard'
 
@@ -30,6 +30,7 @@ export function AssignmentModal({
   const [date, setDate] = useState('')
   const [time, setTime] = useState('18:00')
   const [attachments, setAttachments] = useState<string[]>([])
+  const [allowLate, setAllowLate] = useState(true)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -43,6 +44,7 @@ export function AssignmentModal({
         : '18:00',
     )
     setAttachments(editing?.attachments ?? [])
+    setAllowLate(editing?.allow_late ?? true)
   }, [open, editing])
 
   async function save() {
@@ -55,6 +57,7 @@ export function AssignmentModal({
           title: title.trim(),
           description: description.trim() || null,
           due_date: due,
+          allow_late: allowLate,
           attachments,
         })
         toast.success('Задание обновлено')
@@ -64,6 +67,7 @@ export function AssignmentModal({
           title: title.trim(),
           description: description.trim() || null,
           due_date: due,
+          allow_late: allowLate,
           attachments,
         })
         toast.success('Задание создано')
@@ -147,6 +151,29 @@ export function AssignmentModal({
           </label>
         </div>
 
+        <label
+          className={cx(
+            'flex items-start gap-3 rounded-soft border p-3.5 transition',
+            date ? 'border-line' : 'border-line opacity-55',
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-[3px] h-4 w-4 accent-brand"
+            checked={!allowLate}
+            disabled={!date}
+            onChange={(e) => setAllowLate(!e.target.checked)}
+          />
+          <span>
+            <span className="block text-[13.5px] font-medium text-ink">Не принимать работы после срока</span>
+            <span className="block text-[12px] leading-snug text-ink-3">
+              {date
+                ? 'После указанной даты кнопка сдачи у учеников перестанет работать. Иначе работа примется с пометкой «с опозданием».'
+                : 'Доступно, когда задана дата сдачи'}
+            </span>
+          </span>
+        </label>
+
         <div>
           <span className="mb-1.5 block text-[13px] font-medium text-ink-2">
             Прикрепить материалы <span className="text-ink-3">({attachments.length})</span>
@@ -219,8 +246,7 @@ export function AssignmentDetail({
   onEdit: (a: AssignmentView) => void
   onOpenMaterial: (m: MaterialView) => void
 }) {
-  const { canEdit, materials, refresh } = useApp()
-  const { isTeacher } = useAuth()
+  const { canManage, materials, refresh } = useApp()
   const toast = useToast()
   const gb = useGradebook()
   const [comment, setComment] = useState('')
@@ -268,6 +294,10 @@ export function AssignmentDetail({
 
   if (!assignment) return null
 
+  const overdue = Boolean(assignment.due_date && new Date() > new Date(assignment.due_date))
+  const closed = overdue && !assignment.allow_late
+  const mine = assignment.mySubmission
+
   async function submit() {
     if (!assignment) return
     setBusy(true)
@@ -295,7 +325,7 @@ export function AssignmentDetail({
           <button className="cf-btn-ghost" onClick={onClose}>
             Закрыть
           </button>
-          {canEdit && isTeacher && (
+          {canManage && (
             <>
               <button className="cf-btn-ghost" onClick={pushToGradebook} disabled={busy}>
                 <GraduationCap size={15} />
@@ -306,10 +336,19 @@ export function AssignmentDetail({
               </button>
             </>
           )}
-          {!isTeacher && (
-            <button className="cf-btn-brand" onClick={submit} disabled={busy}>
+          {!canManage && (
+            <button
+              className="cf-btn-brand"
+              onClick={submit}
+              disabled={busy || closed}
+              title={closed ? 'Приём работ закрыт: срок сдачи истёк' : undefined}
+            >
               {busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-              {assignment.mySubmission?.status === 'submitted' ? 'Обновить работу' : 'Сдать работу'}
+              {closed
+                ? 'Приём закрыт'
+                : mine?.status === 'submitted'
+                  ? 'Обновить работу'
+                  : 'Сдать работу'}
             </button>
           )}
         </>
@@ -353,12 +392,22 @@ export function AssignmentDetail({
         )}
 
         {/* Ученик: форма сдачи */}
-        {!isTeacher && (
+        {!canManage && (
           <section className="rounded-card border border-line bg-surface-2/40 p-4">
             <h4 className="mb-2.5 text-[13px] font-semibold text-ink">Моя работа</h4>
-            {assignment.mySubmission?.grade != null && (
+            {mine?.is_late && (
+              <p className="mb-3 text-[13px]" style={{ color: 'var(--cf-red-acc)' }}>
+                Работа сдана после срока
+              </p>
+            )}
+            {closed && !mine?.submitted_at && (
+              <p className="mb-3 text-[13px]" style={{ color: 'var(--cf-red-acc)' }}>
+                Срок сдачи истёк, преподаватель закрыл приём работ
+              </p>
+            )}
+            {mine?.grade != null && (
               <p className="mb-3 text-[13px]" style={{ color: 'var(--cf-green-acc)' }}>
-                Оценка: <b>{assignment.mySubmission.grade}</b>
+                Оценка: <b>{mine.grade}</b>
               </p>
             )}
             <textarea
@@ -377,8 +426,12 @@ export function AssignmentDetail({
           </section>
         )}
 
+        <div className="border-t border-line pt-5">
+          <CommentThread assignmentId={assignment.id} />
+        </div>
+
         {/* Учитель: список сдач */}
-        {isTeacher && (
+        {canManage && (
           <section>
             <h4 className="mb-2 text-[13px] font-semibold text-ink">
               Сдачи ({assignment.submissions.filter((s) => s.status !== 'assigned').length})
@@ -396,6 +449,11 @@ export function AssignmentDetail({
                       <p className="text-[13.5px] font-medium text-ink">{s.student?.name ?? 'Ученик'}</p>
                       <p className="text-[11.5px] text-ink-3">
                         {s.submitted_at ? `Сдано ${formatDateFull(s.submitted_at)}` : 'Не сдано'}
+                        {s.is_late && (
+                          <span className="ml-1.5 font-medium" style={{ color: 'var(--cf-red-acc)' }}>
+                            с опозданием
+                          </span>
+                        )}
                       </p>
                       {s.comment && <p className="mt-1.5 text-[13px] text-ink-2">{s.comment}</p>}
                     </div>

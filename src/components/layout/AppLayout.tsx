@@ -24,8 +24,13 @@ export function AppLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname])
 
+  /* Переход с телефона на большой экран возвращает сохранённый выбор */
   useEffect(() => {
-    const onResize = () => setSidebarOpen(window.innerWidth >= 1024)
+    const onResize = () => {
+      if (window.innerWidth >= 1024) {
+        setSidebarOpen(localStorage.getItem('cf:sidebar') !== 'closed')
+      }
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [setSidebarOpen])

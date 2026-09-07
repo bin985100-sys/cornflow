@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { CardColor, Tag as TagModel, TagColor } from '@/lib/types'
@@ -21,14 +22,26 @@ export function Avatar({
 }) {
   const tone = AVATAR_TONES[(name.charCodeAt(0) || 0) % AVATAR_TONES.length]
   const palette = cardPalette[tone]
-  if (src) {
+  // Ссылка может не открыться (например, фото Google отдаётся не всем) —
+  // тогда молча показываем кружок с инициалами вместо «битой» картинки.
+  const [broken, setBroken] = useState(false)
+  useEffect(() => setBroken(false), [src])
+
+  if (src && !broken) {
     return (
       <img
         src={src}
         alt={name}
         width={size}
         height={size}
-        className={cx('shrink-0 rounded-full object-cover ring-2 ring-surface', className)}
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
+        className={cx(
+          'shrink-0 rounded-full bg-surface-2 object-cover ring-2 ring-surface transition-opacity duration-300',
+          className,
+        )}
         style={{ width: size, height: size }}
       />
     )
@@ -355,7 +368,7 @@ export function ProgressBar({ value, color = 'blue' }: { value: number; color?: 
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-2">
       <div
-        className="h-full rounded-pill transition-[width] duration-300 ease-out"
+        className="h-full rounded-pill transition-[width] duration-700 ease-[cubic-bezier(.22,1,.36,1)]"
         style={{ width: `${Math.min(100, Math.max(0, value))}%`, background: cardPalette[color].accent }}
       />
     </div>
@@ -383,10 +396,11 @@ export function Segmented<T extends string>({
           title={o.title}
           onClick={() => onChange(o.value)}
           className={cx(
-            'inline-flex items-center gap-1.5 rounded-pill font-medium transition duration-200 ease-out',
+            'inline-flex items-center gap-1.5 rounded-pill font-medium',
+            'transition-[background-color,color,box-shadow,transform] duration-300 ease-out active:scale-95',
             size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-3.5 py-2 text-[13px]',
             value === o.value
-              ? 'bg-brand text-white shadow-[0_4px_12px_-6px_rgb(var(--cf-brand))]'
+              ? 'scale-[1.02] bg-brand text-white shadow-[0_4px_12px_-6px_rgb(var(--cf-brand))]'
               : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
           )}
         >

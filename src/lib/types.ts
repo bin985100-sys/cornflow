@@ -40,6 +40,16 @@ export interface Space {
   color: CardColor
   invite_code: string
   created_at: string
+  /** приём новых участников по коду */
+  join_open: boolean
+  /** пространство закрыто: содержимое видит только владелец */
+  is_locked: boolean
+  /** ученикам разрешено добавлять материалы */
+  student_upload: boolean
+  /** разделы, доступные ученикам */
+  show_assignments: boolean
+  show_calendar: boolean
+  show_members: boolean
 }
 
 export interface SpaceMember {
@@ -97,6 +107,8 @@ export interface Assignment {
   title: string
   description: string | null
   due_date: string | null
+  /** принимать ли работы после дедлайна */
+  allow_late: boolean
   /** id материалов, прикреплённых к заданию */
   attachments: string[]
   author_id: string
@@ -115,6 +127,99 @@ export interface Submission {
   attachments: string[]
   grade: number | null
   submitted_at: string | null
+  /** работа сдана после дедлайна */
+  is_late: boolean
+}
+
+/** Комментарий под материалом или заданием */
+export interface Comment {
+  id: string
+  space_id: string
+  material_id: string | null
+  assignment_id: string | null
+  author_id: string
+  body: string
+  created_at: string
+}
+
+export interface CommentView extends Comment {
+  author: Pick<User, 'id' | 'name' | 'avatar'> | null
+}
+
+/* ------------------------------- Тесты ----------------------------------- */
+
+export interface Quiz {
+  id: string
+  space_id: string
+  title: string
+  description: string | null
+  due_date: string | null
+  attempts_allowed: number
+  shuffle: boolean
+  published: boolean
+  author_id: string
+  created_at: string
+}
+
+export interface QuizQuestion {
+  id: string
+  quiz_id: string
+  position: number
+  text: string
+  multiple: boolean
+  points: number
+}
+
+export interface QuizOption {
+  id: string
+  question_id: string
+  position: number
+  text: string
+  /** приходит только преподавателю — ученику база это поле не отдаёт */
+  is_correct?: boolean
+}
+
+export interface QuizAttempt {
+  id: string
+  quiz_id: string
+  student_id: string
+  answers: Record<string, string[]>
+  score: number
+  max_score: number
+  is_late: boolean
+  created_at: string
+}
+
+/** Тест в том виде, в каком его получает ученик: без правильных ответов */
+export interface QuizForStudent {
+  id: string
+  title: string
+  description: string | null
+  due_date: string | null
+  attempts_allowed: number
+  attempts_used: number
+  questions: Array<{
+    id: string
+    text: string
+    multiple: boolean
+    points: number
+    options: Array<{ id: string; text: string }>
+  }>
+}
+
+export interface QuizResult {
+  score: number
+  max_score: number
+  is_late: boolean
+  attempts_left: number
+}
+
+export interface QuizView extends Quiz {
+  questions: number
+  points: number
+  /** для ученика — его лучшая попытка; для преподавателя — все попытки */
+  myAttempt: QuizAttempt | null
+  attempts: Array<QuizAttempt & { student: Pick<User, 'id' | 'name' | 'avatar'> | null }>
 }
 
 export interface Starred {
@@ -190,7 +295,7 @@ export interface UploadProgressItem {
 
 /* =========================================================================
    Журнал оценок (школьный дневник внутри пространства)
-   Таблицы — supabase/migrations/0002_gradebook.sql
+   Таблицы — supabase/migrations/0007_gradebook.sql
    ========================================================================= */
 
 /** Цвет уровня оценки в журнале */

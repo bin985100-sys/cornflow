@@ -53,7 +53,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         className={cx(
-          'relative m-0 flex max-h-[94vh] w-full animate-scale-in flex-col overflow-hidden rounded-t-[26px] border border-line bg-surface shadow-pop sm:m-4 sm:rounded-[26px]',
+          'relative m-0 flex max-h-[94vh] w-full animate-pop flex-col overflow-hidden rounded-t-[26px] border border-line bg-surface shadow-pop sm:m-4 sm:rounded-[26px]',
           widths[size],
           size === 'full' && 'h-[94vh]',
         )}
