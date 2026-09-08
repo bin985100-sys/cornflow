@@ -42,24 +42,55 @@ jobs:
 
       # Без ключей Vite соберёт приложение в mock-режиме: интерфейс откроется,
       # но данных не будет. Лучше упасть здесь, чем выложить пустое зеркало.
-      - name: Proveryaem peremennye
+      #
+      # Основной формат — две переменные. Если вместо них заведён один блок
+      # KEYS со строками вида VITE_SUPABASE_URL=... — разбираем и его.
+      - name: Peremennye
         env:
           URL: ${{ vars.VITE_SUPABASE_URL }}
           KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          BUCKET: ${{ vars.VITE_SUPABASE_BUCKET }}
+          KEYS: ${{ vars.KEYS }}
         run: |
+          if [ -n "$KEYS" ]; then
+            while IFS= read -r line; do
+              line="$(printf '%s' "$line" | tr -d '\r')"
+              case "$line" in
+                VITE_SUPABASE_URL=*)      [ -z "$URL" ]    && URL="${line#*=}" ;;
+                VITE_SUPABASE_ANON_KEY=*) [ -z "$KEY" ]    && KEY="${line#*=}" ;;
+                VITE_SUPABASE_BUCKET=*)   [ -z "$BUCKET" ] && BUCKET="${line#*=}" ;;
+              esac
+            done < <(printf '%s\n' "$KEYS")
+          fi
+
           if [ -z "$URL" ] || [ -z "$KEY" ]; then
-            echo "::error::Ne zadany peremennye VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY."
+            echo "::error::Ne zadany VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY."
             echo "::error::Settings -> Secrets and variables -> Actions -> Variables"
             exit 1
           fi
 
+          # Ловим случай, когда вместо значения вставлено имя переменной
+          if [ "$KEY" = "VITE_SUPABASE_ANON_KEY" ] || [ ${#KEY} -lt 20 ]; then
+            echo "::error::VITE_SUPABASE_ANON_KEY pohozh na zaglushku, a ne na klyuch."
+            echo "::error::Supabase -> Settings -> API Keys -> anon / publishable"
+            exit 1
+          fi
+
+          case "$URL" in
+            https://*.supabase.co*) ;;
+            *) echo "::error::VITE_SUPABASE_URL dolzhen byt vida https://<project>.supabase.co"; exit 1 ;;
+          esac
+
+          {
+            echo "VITE_SUPABASE_URL=$URL"
+            echo "VITE_SUPABASE_ANON_KEY=$KEY"
+            echo "VITE_SUPABASE_BUCKET=${BUCKET:-materials}"
+          } >> "$GITHUB_ENV"
+
       - run: npm ci
 
+      # Значения уже в окружении job — их положил предыдущий шаг
       - name: Sborka
-        env:
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
-          VITE_SUPABASE_BUCKET: ${{ vars.VITE_SUPABASE_BUCKET || 'materials' }}
         run: npm run build
 
       # SPA-роутинг: Pages не умеет rewrites, поэтому любой неизвестный путь
