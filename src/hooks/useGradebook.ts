@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { db } from '@/lib/db'
 import { useApp } from '@/context/AppContext'
 import { useAuth } from '@/context/AuthContext'
@@ -59,6 +59,10 @@ const FALLBACK_SCALE: GradeScale = {
 
 const PERIOD_KEY = 'cornflow.period'
 
+/** Засев справочников журнала — один раз на пространство за сессию вкладки,
+ *  общий для всех экземпляров хука. */
+const seededSpaces = new Set<string>()
+
 /** Загружает журнал активного пространства и держит его в актуальном состоянии. */
 export function useGradebook(): GradebookApi {
   const { space, canEdit } = useApp()
@@ -69,7 +73,6 @@ export function useGradebook(): GradebookApi {
     () => localStorage.getItem(PERIOD_KEY),
   )
   const spaceId = space?.id ?? null
-  const seeded = useRef<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     if (!spaceId) {
@@ -79,9 +82,11 @@ export function useGradebook(): GradebookApi {
     }
     try {
       // Первый заход в журнал пространства создаёт шкалу, категории и периоды.
-      const needSeed = canEdit && !seeded.current.has(spaceId)
+      // Пространство помечаем ДО await: иначе перемонтирование хука или
+      // realtime-обновление успевают запустить второй засев параллельно.
+      const needSeed = canEdit && !seededSpaces.has(spaceId)
+      if (needSeed) seededSpaces.add(spaceId)
       const snap = needSeed ? await db.ensureGradebook(spaceId) : await db.loadGradebook(spaceId)
-      if (needSeed) seeded.current.add(spaceId)
       setData(snap)
     } catch {
       setData(EMPTY)

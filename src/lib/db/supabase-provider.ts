@@ -72,9 +72,17 @@ const GOOGLE_MODE_KEY = 'cornflow.googleMode'
    VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY.
 --------------------------------------------------------------------------- */
 
-function unwrap<T>(res: { data: T | null; error: { message: string } | null }): T {
-  if (res.error) throw new Error(res.error.message)
+function unwrap<T>(res: { data: T | null; error: { message: string; code?: string } | null }): T {
+  if (res.error) throw new Error(humanError(res.error))
   return res.data as T
+}
+
+/** Понятный текст вместо служебного сообщения Postgres. */
+function humanError(error: { message: string; code?: string }): string {
+  if (error.code === '23505' || error.message.includes('duplicate key value')) {
+    return 'Запись с таким названием в этом пространстве уже есть'
+  }
+  return error.message
 }
 
 export class SupabaseProvider implements DataProvider {
@@ -1132,16 +1140,33 @@ export class SupabaseProvider implements DataProvider {
     }
   }
 
+  /** Один заход на пространство за раз: иначе две параллельные загрузки журнала
+   *  успевают обе увидеть пустоту и обе засеять справочники. */
+  private seeding = new Map<string, Promise<GradebookSnapshot>>()
+
   async ensureGradebook(spaceId: string): Promise<GradebookSnapshot> {
+    const running = this.seeding.get(spaceId)
+    if (running) return running
+    const job = this.seedGradebook(spaceId).finally(() => this.seeding.delete(spaceId))
+    this.seeding.set(spaceId, job)
+    return job
+  }
+
+  private async seedGradebook(spaceId: string): Promise<GradebookSnapshot> {
     const current = await this.loadGradebook(spaceId)
     const jobs: PromiseLike<unknown>[] = []
 
+    // upsert + ignoreDuplicates: даже если параллельно засеет другая вкладка,
+    // второй набор просто не запишется — в базе стоят уникальные индексы.
     if (!current.scales.length) {
       const preset = presetByKey('eight').build()
       jobs.push(
         supabase()
           .from('grade_scales')
-          .insert({ ...preset, space_id: spaceId, is_default: true })
+          .upsert({ ...preset, space_id: spaceId, is_default: true }, {
+            onConflict: 'space_id,name',
+            ignoreDuplicates: true,
+          })
           .then(() => undefined),
       )
     }
@@ -1149,7 +1174,10 @@ export class SupabaseProvider implements DataProvider {
       jobs.push(
         supabase()
           .from('lesson_statuses')
-          .insert(DEFAULT_LESSON_STATUSES.map((x, i) => ({ ...x, space_id: spaceId, position: i })))
+          .upsert(
+            DEFAULT_LESSON_STATUSES.map((x, i) => ({ ...x, space_id: spaceId, position: i })),
+            { onConflict: 'space_id,name', ignoreDuplicates: true },
+          )
           .then(() => undefined),
       )
     }
@@ -1157,7 +1185,10 @@ export class SupabaseProvider implements DataProvider {
       jobs.push(
         supabase()
           .from('lesson_priorities')
-          .insert(DEFAULT_LESSON_PRIORITIES.map((x, i) => ({ ...x, space_id: spaceId, position: i })))
+          .upsert(
+            DEFAULT_LESSON_PRIORITIES.map((x, i) => ({ ...x, space_id: spaceId, position: i })),
+            { onConflict: 'space_id,name', ignoreDuplicates: true },
+          )
           .then(() => undefined),
       )
     }
@@ -1165,7 +1196,10 @@ export class SupabaseProvider implements DataProvider {
       jobs.push(
         supabase()
           .from('grade_periods')
-          .insert(defaultPeriods().map((p) => ({ ...p, space_id: spaceId })))
+          .upsert(defaultPeriods().map((p) => ({ ...p, space_id: spaceId })), {
+            onConflict: 'space_id,name',
+            ignoreDuplicates: true,
+          })
           .then(() => undefined),
       )
     }
@@ -1177,7 +1211,7 @@ export class SupabaseProvider implements DataProvider {
       const byName = new Map(after.lessonPriorities.map((p) => [p.name, p.id]))
       const { error } = await supabase()
         .from('grade_categories')
-        .insert(
+        .upsert(
           DEFAULT_CATEGORIES.map((c, i) => {
             const { priority, ...rest } = c
             return {
@@ -1187,6 +1221,7 @@ export class SupabaseProvider implements DataProvider {
               position: i,
             }
           }),
+          { onConflict: 'space_id,name', ignoreDuplicates: true },
         )
       if (error) throw new Error(error.message)
       return this.loadGradebook(spaceId)
