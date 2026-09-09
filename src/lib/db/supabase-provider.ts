@@ -37,8 +37,21 @@ import type {
   QuizQuestion,
   QuizResult,
   QuizView,
+  AccountResult,
+  GroupView,
+  School,
+  SchoolClass,
+  SchoolGroup,
+  SchoolParallel,
+  SchoolPerson,
+  SchoolRole,
+  SchoolSnapshot,
+  SchoolSubject,
+  SubjectAssessmentType,
+  SubjectView,
+  TeachingAssignment,
 } from '../types'
-import { colorFromString, inviteCode, nowIso, uid } from '../utils'
+import { colorFromString, inviteCode, nowIso, schoolLoginEmail, uid } from '../utils'
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_LESSON_PRIORITIES,
@@ -54,8 +67,12 @@ import type {
   CreateGradeItemInput,
   CreateLessonInput,
   CreateMaterialInput,
+  CreateGroupInput,
+  CreatePersonInput,
   CreateSpaceInput,
+  CreateSubjectInput,
   DataProvider,
+  SchoolSignInInput,
   GradeInput,
   SignInInput,
   SignUpInput,
@@ -1638,6 +1655,530 @@ export class SupabaseProvider implements DataProvider {
       .eq('student_id', studentId)
       .eq('date', date)
     if (error) throw new Error(error.message)
+  }
+
+
+  /* =======================================================================
+     Школа
+     ===================================================================== */
+
+  async listSchools(): Promise<School[]> {
+    const { data, error } = await supabase().from('schools').select('*').order('created_at')
+    if (error) throw new Error(humanError(error))
+    return (data ?? []) as School[]
+  }
+
+  async createSchool(name: string): Promise<School> {
+    const me = await this.requireUser()
+    const school = unwrap(
+      await supabase()
+        .from('schools')
+        .insert({ name: name.trim(), code: inviteCode(), owner_id: me.id })
+        .select()
+        .single(),
+    ) as unknown as School
+    // создатель сразу становится администратором школы
+    await supabase().from('school_people').insert({
+      school_id: school.id,
+      role: 'admin',
+      last_name: me.name,
+      first_name: '',
+      user_id: me.id,
+    })
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return school
+  }
+
+  async updateSchool(id: string, patch: Partial<Pick<School, 'name' | 'code'>>): Promise<School> {
+    const row = unwrap(
+      await supabase().from('schools').update(patch).eq('id', id).select().single(),
+    ) as unknown as School
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteSchool(id: string): Promise<void> {
+    const { error } = await supabase().from('schools').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async loadSchool(schoolId: string): Promise<SchoolSnapshot> {
+    const me = await this.requireUser()
+    const [school, parallels, classes, people, subjects, subjectClasses, types, groups, members, assignments] =
+      await Promise.all([
+        supabase().from('schools').select('*').eq('id', schoolId).single(),
+        supabase().from('school_parallels').select('*').eq('school_id', schoolId).order('position'),
+        supabase().from('school_classes').select('*').eq('school_id', schoolId).order('position'),
+        supabase().from('school_people').select('*').eq('school_id', schoolId).order('last_name'),
+        supabase().from('school_subjects').select('*').eq('school_id', schoolId).order('position'),
+        supabase().from('subject_classes').select('*'),
+        supabase().from('subject_assessment_types').select('*').order('position'),
+        supabase().from('school_groups').select('*').eq('school_id', schoolId).order('name'),
+        supabase().from('group_members').select('*'),
+        supabase().from('teaching_assignments').select('*').eq('school_id', schoolId),
+      ])
+
+    if (school.error) throw new Error(humanError(school.error))
+    const s = school.data as unknown as School
+    const peopleRows = (people.data ?? []) as unknown as SchoolPerson[]
+    const subjectRows = (subjects.data ?? []) as unknown as SchoolSubject[]
+    const groupRows = (groups.data ?? []) as unknown as SchoolGroup[]
+
+    const linkRows = (subjectClasses.data ?? []) as Array<{ subject_id: string; class_id: string }>
+    const typeRows = (types.data ?? []) as unknown as SubjectAssessmentType[]
+    const memberRows = (members.data ?? []) as Array<{ group_id: string; person_id: string }>
+
+    const mine = peopleRows.find((p) => p.user_id === me.id)
+    const role: SchoolRole = s.owner_id === me.id ? 'admin' : (mine?.role ?? 'student')
+
+    return {
+      school: s,
+      role,
+      parallels: (parallels.data ?? []) as unknown as SchoolParallel[],
+      classes: (classes.data ?? []) as unknown as SchoolClass[],
+      people: peopleRows,
+      subjects: subjectRows.map((sub) => ({
+        ...sub,
+        class_ids: linkRows.filter((l) => l.subject_id === sub.id).map((l) => l.class_id),
+        assessment_types: typeRows.filter((t) => t.subject_id === sub.id),
+      })),
+      groups: groupRows.map((g) => ({
+        ...g,
+        member_ids: memberRows.filter((m) => m.group_id === g.id).map((m) => m.person_id),
+      })),
+      assignments: (assignments.data ?? []) as unknown as TeachingAssignment[],
+    }
+  }
+
+  /* ------------------------- параллели и классы ------------------------- */
+
+  async createParallel(schoolId: string, name: string): Promise<SchoolParallel> {
+    const row = unwrap(
+      await supabase()
+        .from('school_parallels')
+        .insert({ school_id: schoolId, name: name.trim() })
+        .select()
+        .single(),
+    ) as unknown as SchoolParallel
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updateParallel(
+    id: string,
+    patch: Partial<Pick<SchoolParallel, 'name' | 'position'>>,
+  ): Promise<SchoolParallel> {
+    const row = unwrap(
+      await supabase().from('school_parallels').update(patch).eq('id', id).select().single(),
+    ) as unknown as SchoolParallel
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteParallel(id: string): Promise<void> {
+    const { error } = await supabase().from('school_parallels').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async createClass(schoolId: string, parallelId: string, name: string): Promise<SchoolClass> {
+    const row = unwrap(
+      await supabase()
+        .from('school_classes')
+        .insert({ school_id: schoolId, parallel_id: parallelId, name: name.trim() })
+        .select()
+        .single(),
+    ) as unknown as SchoolClass
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updateClass(
+    id: string,
+    patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position'>>,
+  ): Promise<SchoolClass> {
+    const row = unwrap(
+      await supabase().from('school_classes').update(patch).eq('id', id).select().single(),
+    ) as unknown as SchoolClass
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteClass(id: string): Promise<void> {
+    const { error } = await supabase().from('school_classes').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /* ------------------------------ люди ---------------------------------- */
+
+  async createPerson(input: CreatePersonInput): Promise<SchoolPerson> {
+    const [row] = await this.createPeople([input])
+    return row
+  }
+
+  async createPeople(inputs: CreatePersonInput[]): Promise<SchoolPerson[]> {
+    if (!inputs.length) return []
+    const rows = unwrap(
+      await supabase()
+        .from('school_people')
+        .insert(
+          inputs.map((i) => ({
+            school_id: i.school_id,
+            role: i.role,
+            last_name: i.last_name.trim(),
+            first_name: i.first_name.trim(),
+            middle_name: i.middle_name ?? null,
+            class_id: i.class_id ?? null,
+            login: i.login ?? null,
+            note: i.note ?? null,
+          })),
+        )
+        .select(),
+    ) as unknown as SchoolPerson[]
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return rows
+  }
+
+  async updatePerson(
+    id: string,
+    patch: Partial<
+      Pick<
+        SchoolPerson,
+        'last_name' | 'first_name' | 'middle_name' | 'class_id' | 'login' | 'is_active' | 'note' | 'role'
+      >
+    >,
+  ): Promise<SchoolPerson> {
+    const row = unwrap(
+      await supabase().from('school_people').update(patch).eq('id', id).select().single(),
+    ) as unknown as SchoolPerson
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deletePerson(id: string): Promise<void> {
+    const { error } = await supabase().from('school_people').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /* ---------------------------- аккаунты -------------------------------- */
+
+  private async callAccounts(
+    action: 'create' | 'set_password',
+    schoolId: string,
+    people: Array<Record<string, unknown>>,
+  ): Promise<AccountResult[]> {
+    const out: AccountResult[] = []
+    // серверная функция принимает не больше 200 человек за раз
+    for (let i = 0; i < people.length; i += 200) {
+      const { data, error } = await supabase().functions.invoke('school-accounts', {
+        body: { action, school_id: schoolId, people: people.slice(i, i + 200) },
+      })
+      if (error) {
+        throw new Error(
+          'Не удалось обратиться к серверной функции school-accounts. ' +
+            'Проверьте, что она развёрнута в проекте Supabase. Ответ: ' +
+            error.message,
+        )
+      }
+      const payload = data as { results?: AccountResult[]; error?: string }
+      if (payload?.error) throw new Error(payload.error)
+      out.push(...(payload?.results ?? []))
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return out
+  }
+
+  async createAccounts(
+    schoolId: string,
+    people: Array<{ person_id: string; login: string; password: string }>,
+  ): Promise<AccountResult[]> {
+    return this.callAccounts('create', schoolId, people)
+  }
+
+  async setAccountPassword(
+    schoolId: string,
+    people: Array<{ person_id: string; password: string }>,
+  ): Promise<AccountResult[]> {
+    return this.callAccounts('set_password', schoolId, people)
+  }
+
+  /* ---------------------------- предметы -------------------------------- */
+
+  private async subjectView(id: string): Promise<SubjectView> {
+    const [subject, links, types] = await Promise.all([
+      supabase().from('school_subjects').select('*').eq('id', id).single(),
+      supabase().from('subject_classes').select('class_id').eq('subject_id', id),
+      supabase().from('subject_assessment_types').select('*').eq('subject_id', id).order('position'),
+    ])
+    if (subject.error) throw new Error(humanError(subject.error))
+    return {
+      ...(subject.data as unknown as SchoolSubject),
+      class_ids: ((links.data ?? []) as Array<{ class_id: string }>).map((l) => l.class_id),
+      assessment_types: (types.data ?? []) as unknown as SubjectAssessmentType[],
+    }
+  }
+
+  async createSubject(input: CreateSubjectInput): Promise<SubjectView> {
+    const subject = unwrap(
+      await supabase()
+        .from('school_subjects')
+        .insert({
+          school_id: input.school_id,
+          name: input.name.trim(),
+          code: input.code ?? null,
+          color: input.color ?? colorFromString(input.name),
+        })
+        .select()
+        .single(),
+    ) as unknown as SchoolSubject
+    if (input.class_ids?.length) {
+      await supabase()
+        .from('subject_classes')
+        .insert(input.class_ids.map((c) => ({ subject_id: subject.id, class_id: c })))
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return this.subjectView(subject.id)
+  }
+
+  async updateSubject(
+    id: string,
+    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position'>> & { class_ids?: string[] },
+  ): Promise<SubjectView> {
+    const { class_ids, ...rest } = patch
+    if (Object.keys(rest).length) {
+      const { error } = await supabase().from('school_subjects').update(rest).eq('id', id)
+      if (error) throw new Error(humanError(error))
+    }
+    if (class_ids) {
+      await supabase().from('subject_classes').delete().eq('subject_id', id)
+      if (class_ids.length) {
+        await supabase()
+          .from('subject_classes')
+          .insert(class_ids.map((c) => ({ subject_id: id, class_id: c })))
+      }
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return this.subjectView(id)
+  }
+
+  async deleteSubject(id: string): Promise<void> {
+    const { error } = await supabase().from('school_subjects').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async addAssessmentType(
+    subjectId: string,
+    input: Omit<SubjectAssessmentType, 'id' | 'subject_id' | 'created_at'>,
+  ): Promise<SubjectAssessmentType> {
+    const row = unwrap(
+      await supabase()
+        .from('subject_assessment_types')
+        .insert({ ...input, subject_id: subjectId })
+        .select()
+        .single(),
+    ) as unknown as SubjectAssessmentType
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updateAssessmentType(
+    id: string,
+    patch: Partial<Omit<SubjectAssessmentType, 'id' | 'subject_id' | 'created_at'>>,
+  ): Promise<SubjectAssessmentType> {
+    const row = unwrap(
+      await supabase().from('subject_assessment_types').update(patch).eq('id', id).select().single(),
+    ) as unknown as SubjectAssessmentType
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteAssessmentType(id: string): Promise<void> {
+    const { error } = await supabase().from('subject_assessment_types').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /* ----------------------------- группы --------------------------------- */
+
+  private async groupView(id: string): Promise<GroupView> {
+    const [group, members] = await Promise.all([
+      supabase().from('school_groups').select('*').eq('id', id).single(),
+      supabase().from('group_members').select('person_id').eq('group_id', id),
+    ])
+    if (group.error) throw new Error(humanError(group.error))
+    return {
+      ...(group.data as unknown as SchoolGroup),
+      member_ids: ((members.data ?? []) as Array<{ person_id: string }>).map((m) => m.person_id),
+    }
+  }
+
+  async createGroup(input: CreateGroupInput): Promise<GroupView> {
+    const group = unwrap(
+      await supabase()
+        .from('school_groups')
+        .insert({
+          school_id: input.school_id,
+          name: input.name.trim(),
+          kind: input.kind,
+          parallel_id: input.parallel_id ?? null,
+          class_id: input.class_id ?? null,
+        })
+        .select()
+        .single(),
+    ) as unknown as SchoolGroup
+    if (input.member_ids?.length) {
+      await supabase()
+        .from('group_members')
+        .insert(input.member_ids.map((p) => ({ group_id: group.id, person_id: p })))
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return this.groupView(group.id)
+  }
+
+  async updateGroup(
+    id: string,
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & { member_ids?: string[] },
+  ): Promise<GroupView> {
+    const { member_ids, ...rest } = patch
+    if (Object.keys(rest).length) {
+      const { error } = await supabase().from('school_groups').update(rest).eq('id', id)
+      if (error) throw new Error(humanError(error))
+    }
+    if (member_ids) {
+      await supabase().from('group_members').delete().eq('group_id', id)
+      if (member_ids.length) {
+        await supabase()
+          .from('group_members')
+          .insert(member_ids.map((p) => ({ group_id: id, person_id: p })))
+      }
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return this.groupView(id)
+  }
+
+  async deleteGroup(id: string): Promise<void> {
+    const { error } = await supabase().from('school_groups').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /* --------------------------- преподавание ----------------------------- */
+
+  async createTeaching(input: {
+    school_id: string
+    subject_id: string
+    group_id: string
+    teacher_id: string | null
+  }): Promise<TeachingAssignment> {
+    const me = await this.requireUser()
+    const subject = await this.subjectView(input.subject_id)
+    const group = await this.groupView(input.group_id)
+
+    // пространство-журнал: у каждого учителя своё на каждый предмет
+    const space = unwrap(
+      await supabase()
+        .from('spaces')
+        .insert({
+          name: `${subject.name} · ${group.name}`,
+          description: 'Курс собран из школы: предмет, группа и учитель',
+          owner_id: me.id,
+          color: subject.color,
+          invite_code: inviteCode(),
+          school_id: input.school_id,
+          subject_id: subject.id,
+        })
+        .select()
+        .single(),
+    ) as unknown as Space
+
+    // участники: администратор, учитель и ученики группы
+    const { data: peopleRows } = await supabase()
+      .from('school_people')
+      .select('id, user_id, role')
+      .eq('school_id', input.school_id)
+    const people = (peopleRows ?? []) as Array<{ id: string; user_id: string | null; role: SchoolRole }>
+
+    const members: Array<{ space_id: string; user_id: string; permission: Permission }> = [
+      { space_id: space.id, user_id: me.id, permission: 'edit' },
+    ]
+    const teacher = people.find((p) => p.id === input.teacher_id)
+    if (teacher?.user_id && teacher.user_id !== me.id) {
+      members.push({ space_id: space.id, user_id: teacher.user_id, permission: 'edit' })
+    }
+    for (const personId of group.member_ids) {
+      const person = people.find((p) => p.id === personId)
+      if (person?.user_id && !members.some((m) => m.user_id === person.user_id)) {
+        members.push({ space_id: space.id, user_id: person.user_id, permission: 'view' })
+      }
+    }
+    await supabase().from('space_members').upsert(members, { onConflict: 'space_id,user_id' })
+
+    // журнал: типы работ берём из предмета, если они там заданы
+    await this.ensureGradebook(space.id)
+    if (subject.assessment_types.length) {
+      await supabase().from('grade_categories').delete().eq('space_id', space.id)
+      await supabase().from('grade_categories').insert(
+        subject.assessment_types.map((t, i) => ({
+          space_id: space.id,
+          name: t.name,
+          code: t.code,
+          weight: t.weight,
+          color: t.color,
+          counts_toward_grade: t.counts_toward_grade,
+          position: i,
+        })),
+      )
+    }
+
+    const row = unwrap(
+      await supabase()
+        .from('teaching_assignments')
+        .insert({
+          school_id: input.school_id,
+          subject_id: input.subject_id,
+          group_id: input.group_id,
+          teacher_id: input.teacher_id,
+          space_id: space.id,
+        })
+        .select()
+        .single(),
+    ) as unknown as TeachingAssignment
+
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    this.listeners.forEach((l) => l({ table: 'spaces' }))
+    return row
+  }
+
+  async deleteTeaching(id: string): Promise<void> {
+    const { error } = await supabase().from('teaching_assignments').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /** Вход по школьному аккаунту: код школы + логин + выданный пароль */
+  async signInToSchool(input: SchoolSignInInput): Promise<User> {
+    const code = input.code.trim()
+    const login = input.login.trim()
+    if (!code || !login) throw new Error('Укажите код школы и логин')
+
+    // сначала спрашиваем почту у базы — так работают и логины,
+    // заведённые до появления строгой нормализации
+    let email: string | null = null
+    const { data } = await supabase().rpc('school_login_email', { p_code: code, p_login: login })
+    if (typeof data === 'string' && data) email = data
+    if (!email) email = schoolLoginEmail(login, code)
+
+    const { error } = await supabase().auth.signInWithPassword({ email, password: input.password })
+    if (error) {
+      throw new Error('Неверный код школы, логин или пароль')
+    }
+    const user = await this.getCurrentUser()
+    if (!user) throw new Error('Профиль не найден')
+    return user
   }
 
   subscribe(cb: (e: ChangeEvent) => void): () => void {

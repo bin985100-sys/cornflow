@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { db } from '@/lib/db'
-import type { SignInInput, SignUpInput } from '@/lib/db'
+import type { SchoolSignInInput, SignInInput, SignUpInput } from '@/lib/db'
 import type {User } from '@/lib/types'
 
 interface AuthApi {
@@ -16,6 +16,8 @@ interface AuthApi {
   loading: boolean
   isTeacher: boolean
   signIn: (input: SignInInput) => Promise<void>
+  /** Вход по школьному аккаунту: код школы, логин и выданный пароль */
+  signInToSchool: ((input: SchoolSignInInput) => Promise<void>) | null
   signUp: (input: SignUpInput) => Promise<void>
   signOut: () => Promise<void>
   signInWithGoogle: ((redirectTo?: string) => Promise<void>) | null
@@ -48,6 +50,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(await db.signIn(input))
   }, [])
 
+  const signInToSchool = useCallback(async (input: SchoolSignInInput) => {
+    if (!db.signInToSchool) throw new Error('Вход по школьному аккаунту недоступен')
+    setUser(await db.signInToSchool(input))
+  }, [])
+
   const signUp = useCallback(async (input: SignUpInput) => {
     setUser(await db.signUp(input))
   }, [])
@@ -67,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       isTeacher: user?.role === 'teacher',
       signIn,
+      signInToSchool: db.signInToSchool ? signInToSchool : null,
       signUp,
       signOut,
       updateProfile,
@@ -75,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? (redirectTo?: string) => db.signInWithGoogle!(redirectTo)
         : null,
     }),
-    [user, loading, signIn, signUp, signOut, updateProfile],
+    [user, loading, signIn, signInToSchool, signUp, signOut, updateProfile],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

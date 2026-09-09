@@ -40,6 +40,19 @@ import type {
   QuizQuestion,
   QuizResult,
   QuizView,
+  AccountResult,
+  GroupView,
+  School,
+  SchoolClass,
+  SchoolGroup,
+  SchoolParallel,
+  SchoolPerson,
+  SchoolRole,
+  SchoolSnapshot,
+  SchoolSubject,
+  SubjectAssessmentType,
+  SubjectView,
+  TeachingAssignment,
 } from '../types'
 import { colorFromString, inviteCode, nowIso, uid } from '../utils'
 import {
@@ -57,9 +70,13 @@ import type {
   CreateGradeItemInput,
   CreateLessonInput,
   CreateMaterialInput,
+  CreateGroupInput,
+  CreatePersonInput,
   CreateSpaceInput,
+  CreateSubjectInput,
   DataProvider,
   GradeInput,
+  SchoolSignInInput,
   SignInInput,
   SignUpInput,
   UploadResult,
@@ -102,6 +119,16 @@ interface MockDB {
   space_bundles: SpaceBundle[]
   bundle_spaces: Array<{ bundle_id: string; space_id: string; added_by: string | null; added_at: string }>
   attendance: Attendance[]
+  schools: School[]
+  school_people: SchoolPerson[]
+  school_parallels: SchoolParallel[]
+  school_classes: SchoolClass[]
+  school_subjects: SchoolSubject[]
+  subject_classes: Array<{ subject_id: string; class_id: string }>
+  subject_assessment_types: SubjectAssessmentType[]
+  school_groups: SchoolGroup[]
+  group_members: Array<{ group_id: string; person_id: string; added_at: string }>
+  teaching_assignments: TeachingAssignment[]
 }
 
 function emptyDb(): MockDB {
@@ -136,6 +163,16 @@ function emptyDb(): MockDB {
     space_bundles: [],
     bundle_spaces: [],
     attendance: [],
+    schools: [],
+    school_people: [],
+    school_parallels: [],
+    school_classes: [],
+    school_subjects: [],
+    subject_classes: [],
+    subject_assessment_types: [],
+    school_groups: [],
+    group_members: [],
+    teaching_assignments: [],
   }
 }
 
@@ -258,6 +295,569 @@ export class MockProvider implements DataProvider {
     const member = this.db.space_members.find((m) => m.space_id === spaceId && m.user_id === me.id)
     if (!member) throw new Error('Нет доступа к этому пространству')
     if (needEdit && member.permission !== 'edit') throw new Error('Недостаточно прав: только просмотр')
+  }
+
+
+  /* =======================================================================
+     Школа (локальный режим): те же правила, что и на сервере, но всё
+     хранится в этом браузере. Аккаунты заводятся сразу, без серверной функции.
+     ===================================================================== */
+
+  private schoolRole(schoolId: string): SchoolRole {
+    const me = this.me()
+    const school = this.db.schools.find((s) => s.id === schoolId)
+    if (school?.owner_id === me.id) return 'admin'
+    const person = this.db.school_people.find((p) => p.school_id === schoolId && p.user_id === me.id)
+    return person?.role ?? 'student'
+  }
+
+  private assertSchoolAdmin(schoolId: string) {
+    if (this.schoolRole(schoolId) !== 'admin') {
+      throw new Error('Менять справочник школы может только администратор')
+    }
+  }
+
+  async listSchools(): Promise<School[]> {
+    const me = this.me()
+    return this.db.schools.filter(
+      (s) =>
+        s.owner_id === me.id ||
+        this.db.school_people.some((p) => p.school_id === s.id && p.user_id === me.id),
+    )
+  }
+
+  async createSchool(name: string): Promise<School> {
+    const me = this.me()
+    const school: School = {
+      id: uid('school'),
+      name: name.trim(),
+      code: inviteCode(),
+      owner_id: me.id,
+      created_at: nowIso(),
+    }
+    this.db.schools.push(school)
+    this.db.school_people.push({
+      id: uid('person'),
+      school_id: school.id,
+      role: 'admin',
+      last_name: me.name,
+      first_name: '',
+      middle_name: null,
+      login: null,
+      user_id: me.id,
+      class_id: null,
+      is_active: true,
+      note: null,
+      created_at: nowIso(),
+    })
+    this.persist({ table: 'school' })
+    return school
+  }
+
+  async updateSchool(id: string, patch: Partial<Pick<School, 'name' | 'code'>>): Promise<School> {
+    this.assertSchoolAdmin(id)
+    const school = this.db.schools.find((s) => s.id === id)
+    if (!school) throw new Error('Школа не найдена')
+    Object.assign(school, patch)
+    this.persist({ table: 'school' })
+    return school
+  }
+
+  async deleteSchool(id: string): Promise<void> {
+    const school = this.db.schools.find((s) => s.id === id)
+    if (!school) return
+    const me = this.me()
+    if (school.owner_id !== me.id) throw new Error('Удалить школу может только её создатель')
+    const classIds = this.db.school_classes.filter((c) => c.school_id === id).map((c) => c.id)
+    const subjectIds = this.db.school_subjects.filter((x) => x.school_id === id).map((x) => x.id)
+    const groupIds = this.db.school_groups.filter((g) => g.school_id === id).map((g) => g.id)
+    this.db.schools = this.db.schools.filter((s) => s.id !== id)
+    this.db.school_people = this.db.school_people.filter((p) => p.school_id !== id)
+    this.db.school_parallels = this.db.school_parallels.filter((p) => p.school_id !== id)
+    this.db.school_classes = this.db.school_classes.filter((c) => !classIds.includes(c.id))
+    this.db.school_subjects = this.db.school_subjects.filter((x) => !subjectIds.includes(x.id))
+    this.db.subject_classes = this.db.subject_classes.filter((l) => !subjectIds.includes(l.subject_id))
+    this.db.subject_assessment_types = this.db.subject_assessment_types.filter(
+      (t) => !subjectIds.includes(t.subject_id),
+    )
+    this.db.school_groups = this.db.school_groups.filter((g) => !groupIds.includes(g.id))
+    this.db.group_members = this.db.group_members.filter((m) => !groupIds.includes(m.group_id))
+    this.db.teaching_assignments = this.db.teaching_assignments.filter((a) => a.school_id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  async loadSchool(schoolId: string): Promise<SchoolSnapshot> {
+    const school = this.db.schools.find((s) => s.id === schoolId)
+    if (!school) throw new Error('Школа не найдена')
+    return {
+      school,
+      role: this.schoolRole(schoolId),
+      parallels: this.db.school_parallels
+        .filter((p) => p.school_id === schoolId)
+        .sort((a, b) => a.position - b.position),
+      classes: this.db.school_classes
+        .filter((c) => c.school_id === schoolId)
+        .sort((a, b) => a.position - b.position),
+      people: this.db.school_people
+        .filter((p) => p.school_id === schoolId)
+        .sort((a, b) => a.last_name.localeCompare(b.last_name, 'ru')),
+      subjects: this.db.school_subjects
+        .filter((x) => x.school_id === schoolId)
+        .map((sub) => ({
+          ...sub,
+          class_ids: this.db.subject_classes.filter((l) => l.subject_id === sub.id).map((l) => l.class_id),
+          assessment_types: this.db.subject_assessment_types
+            .filter((t) => t.subject_id === sub.id)
+            .sort((a, b) => a.position - b.position),
+        })),
+      groups: this.db.school_groups
+        .filter((g) => g.school_id === schoolId)
+        .map((g) => ({
+          ...g,
+          member_ids: this.db.group_members.filter((m) => m.group_id === g.id).map((m) => m.person_id),
+        })),
+      assignments: this.db.teaching_assignments.filter((a) => a.school_id === schoolId),
+    }
+  }
+
+  async createParallel(schoolId: string, name: string): Promise<SchoolParallel> {
+    this.assertSchoolAdmin(schoolId)
+    const row: SchoolParallel = {
+      id: uid('parallel'),
+      school_id: schoolId,
+      name: name.trim(),
+      position: this.db.school_parallels.filter((p) => p.school_id === schoolId).length,
+      created_at: nowIso(),
+    }
+    this.db.school_parallels.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updateParallel(
+    id: string,
+    patch: Partial<Pick<SchoolParallel, 'name' | 'position'>>,
+  ): Promise<SchoolParallel> {
+    const row = this.db.school_parallels.find((p) => p.id === id)
+    if (!row) throw new Error('Параллель не найдена')
+    this.assertSchoolAdmin(row.school_id)
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteParallel(id: string): Promise<void> {
+    const row = this.db.school_parallels.find((p) => p.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    const classIds = this.db.school_classes.filter((c) => c.parallel_id === id).map((c) => c.id)
+    this.db.school_parallels = this.db.school_parallels.filter((p) => p.id !== id)
+    this.db.school_classes = this.db.school_classes.filter((c) => c.parallel_id !== id)
+    this.db.school_people.forEach((p) => {
+      if (p.class_id && classIds.includes(p.class_id)) p.class_id = null
+    })
+    this.persist({ table: 'school' })
+  }
+
+  async createClass(schoolId: string, parallelId: string, name: string): Promise<SchoolClass> {
+    this.assertSchoolAdmin(schoolId)
+    const row: SchoolClass = {
+      id: uid('class'),
+      school_id: schoolId,
+      parallel_id: parallelId,
+      name: name.trim(),
+      position: this.db.school_classes.filter((c) => c.parallel_id === parallelId).length,
+      created_at: nowIso(),
+    }
+    this.db.school_classes.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updateClass(
+    id: string,
+    patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position'>>,
+  ): Promise<SchoolClass> {
+    const row = this.db.school_classes.find((c) => c.id === id)
+    if (!row) throw new Error('Класс не найден')
+    this.assertSchoolAdmin(row.school_id)
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteClass(id: string): Promise<void> {
+    const row = this.db.school_classes.find((c) => c.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.school_classes = this.db.school_classes.filter((c) => c.id !== id)
+    this.db.school_people.forEach((p) => {
+      if (p.class_id === id) p.class_id = null
+    })
+    this.persist({ table: 'school' })
+  }
+
+  async createPerson(input: CreatePersonInput): Promise<SchoolPerson> {
+    const [row] = await this.createPeople([input])
+    return row
+  }
+
+  async createPeople(inputs: CreatePersonInput[]): Promise<SchoolPerson[]> {
+    if (!inputs.length) return []
+    this.assertSchoolAdmin(inputs[0].school_id)
+    const rows: SchoolPerson[] = inputs.map((i) => ({
+      id: uid('person'),
+      school_id: i.school_id,
+      role: i.role,
+      last_name: i.last_name.trim(),
+      first_name: i.first_name.trim(),
+      middle_name: i.middle_name ?? null,
+      login: i.login ?? null,
+      user_id: null,
+      class_id: i.class_id ?? null,
+      is_active: true,
+      note: i.note ?? null,
+      created_at: nowIso(),
+    }))
+    this.db.school_people.push(...rows)
+    this.persist({ table: 'school' })
+    return rows
+  }
+
+  async updatePerson(
+    id: string,
+    patch: Partial<
+      Pick<
+        SchoolPerson,
+        'last_name' | 'first_name' | 'middle_name' | 'class_id' | 'login' | 'is_active' | 'note' | 'role'
+      >
+    >,
+  ): Promise<SchoolPerson> {
+    const row = this.db.school_people.find((p) => p.id === id)
+    if (!row) throw new Error('Человек не найден')
+    this.assertSchoolAdmin(row.school_id)
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deletePerson(id: string): Promise<void> {
+    const row = this.db.school_people.find((p) => p.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.school_people = this.db.school_people.filter((p) => p.id !== id)
+    this.db.group_members = this.db.group_members.filter((m) => m.person_id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  async createAccounts(
+    schoolId: string,
+    people: Array<{ person_id: string; login: string; password: string }>,
+  ): Promise<AccountResult[]> {
+    this.assertSchoolAdmin(schoolId)
+    const school = this.db.schools.find((s) => s.id === schoolId)
+    if (!school) throw new Error('Школа не найдена')
+    const results: AccountResult[] = []
+    for (const item of people) {
+      const person = this.db.school_people.find((p) => p.id === item.person_id)
+      if (!person || person.school_id !== schoolId) {
+        results.push({ person_id: item.person_id, ok: false, error: 'Человек не найден' })
+        continue
+      }
+      if (item.password.trim().length < 6) {
+        results.push({ person_id: item.person_id, ok: false, error: 'Пароль короче 6 символов' })
+        continue
+      }
+      const login = item.login.trim()
+      const email = `${login.toLowerCase()}@${school.code.toLowerCase()}.cornflow.school`
+      const name = [person.last_name, person.first_name].filter(Boolean).join(' ') || login
+      const existing = person.user_id ? this.db.users.find((u) => u.id === person.user_id) : undefined
+      if (existing) {
+        existing.password = item.password
+        existing.name = name
+      } else {
+        this.db.users.push({
+          id: uid('user'),
+          name,
+          email,
+          role: person.role === 'student' ? 'student' : 'teacher',
+          avatar: null,
+          created_at: nowIso(),
+          password: item.password,
+        })
+        person.user_id = this.db.users[this.db.users.length - 1].id
+      }
+      person.login = login
+      results.push({ person_id: person.id, ok: true, login })
+    }
+    this.persist({ table: 'school' })
+    return results
+  }
+
+  async setAccountPassword(
+    schoolId: string,
+    people: Array<{ person_id: string; password: string }>,
+  ): Promise<AccountResult[]> {
+    this.assertSchoolAdmin(schoolId)
+    const results: AccountResult[] = []
+    for (const item of people) {
+      const person = this.db.school_people.find((p) => p.id === item.person_id)
+      const user = person?.user_id ? this.db.users.find((u) => u.id === person.user_id) : undefined
+      if (!user) {
+        results.push({ person_id: item.person_id, ok: false, error: 'У человека ещё нет аккаунта' })
+        continue
+      }
+      if (item.password.trim().length < 6) {
+        results.push({ person_id: item.person_id, ok: false, error: 'Пароль короче 6 символов' })
+        continue
+      }
+      user.password = item.password
+      results.push({ person_id: item.person_id, ok: true })
+    }
+    this.persist({ table: 'school' })
+    return results
+  }
+
+  private mockSubjectView(id: string): SubjectView {
+    const subject = this.db.school_subjects.find((x) => x.id === id)
+    if (!subject) throw new Error('Предмет не найден')
+    return {
+      ...subject,
+      class_ids: this.db.subject_classes.filter((l) => l.subject_id === id).map((l) => l.class_id),
+      assessment_types: this.db.subject_assessment_types
+        .filter((t) => t.subject_id === id)
+        .sort((a, b) => a.position - b.position),
+    }
+  }
+
+  async createSubject(input: CreateSubjectInput): Promise<SubjectView> {
+    this.assertSchoolAdmin(input.school_id)
+    const subject: SchoolSubject = {
+      id: uid('subject'),
+      school_id: input.school_id,
+      name: input.name.trim(),
+      code: input.code ?? null,
+      color: input.color ?? colorFromString(input.name),
+      position: this.db.school_subjects.filter((x) => x.school_id === input.school_id).length,
+      created_at: nowIso(),
+    }
+    this.db.school_subjects.push(subject)
+    for (const classId of input.class_ids ?? []) {
+      this.db.subject_classes.push({ subject_id: subject.id, class_id: classId })
+    }
+    this.persist({ table: 'school' })
+    return this.mockSubjectView(subject.id)
+  }
+
+  async updateSubject(
+    id: string,
+    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position'>> & { class_ids?: string[] },
+  ): Promise<SubjectView> {
+    const subject = this.db.school_subjects.find((x) => x.id === id)
+    if (!subject) throw new Error('Предмет не найден')
+    this.assertSchoolAdmin(subject.school_id)
+    const { class_ids, ...rest } = patch
+    Object.assign(subject, rest)
+    if (class_ids) {
+      this.db.subject_classes = this.db.subject_classes.filter((l) => l.subject_id !== id)
+      for (const classId of class_ids) this.db.subject_classes.push({ subject_id: id, class_id: classId })
+    }
+    this.persist({ table: 'school' })
+    return this.mockSubjectView(id)
+  }
+
+  async deleteSubject(id: string): Promise<void> {
+    const subject = this.db.school_subjects.find((x) => x.id === id)
+    if (!subject) return
+    this.assertSchoolAdmin(subject.school_id)
+    this.db.school_subjects = this.db.school_subjects.filter((x) => x.id !== id)
+    this.db.subject_classes = this.db.subject_classes.filter((l) => l.subject_id !== id)
+    this.db.subject_assessment_types = this.db.subject_assessment_types.filter((t) => t.subject_id !== id)
+    this.db.teaching_assignments = this.db.teaching_assignments.filter((a) => a.subject_id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  async addAssessmentType(
+    subjectId: string,
+    input: Omit<SubjectAssessmentType, 'id' | 'subject_id' | 'created_at'>,
+  ): Promise<SubjectAssessmentType> {
+    const subject = this.db.school_subjects.find((x) => x.id === subjectId)
+    if (!subject) throw new Error('Предмет не найден')
+    this.assertSchoolAdmin(subject.school_id)
+    const row: SubjectAssessmentType = { ...input, id: uid('atype'), subject_id: subjectId, created_at: nowIso() }
+    this.db.subject_assessment_types.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updateAssessmentType(
+    id: string,
+    patch: Partial<Omit<SubjectAssessmentType, 'id' | 'subject_id' | 'created_at'>>,
+  ): Promise<SubjectAssessmentType> {
+    const row = this.db.subject_assessment_types.find((t) => t.id === id)
+    if (!row) throw new Error('Тип оценивания не найден')
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteAssessmentType(id: string): Promise<void> {
+    this.db.subject_assessment_types = this.db.subject_assessment_types.filter((t) => t.id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  private mockGroupView(id: string): GroupView {
+    const group = this.db.school_groups.find((g) => g.id === id)
+    if (!group) throw new Error('Группа не найдена')
+    return {
+      ...group,
+      member_ids: this.db.group_members.filter((m) => m.group_id === id).map((m) => m.person_id),
+    }
+  }
+
+  async createGroup(input: CreateGroupInput): Promise<GroupView> {
+    this.assertSchoolAdmin(input.school_id)
+    const group: SchoolGroup = {
+      id: uid('group'),
+      school_id: input.school_id,
+      name: input.name.trim(),
+      kind: input.kind,
+      parallel_id: input.parallel_id ?? null,
+      class_id: input.class_id ?? null,
+      created_at: nowIso(),
+    }
+    this.db.school_groups.push(group)
+    for (const personId of input.member_ids ?? []) {
+      this.db.group_members.push({ group_id: group.id, person_id: personId, added_at: nowIso() })
+    }
+    this.persist({ table: 'school' })
+    return this.mockGroupView(group.id)
+  }
+
+  async updateGroup(
+    id: string,
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & { member_ids?: string[] },
+  ): Promise<GroupView> {
+    const group = this.db.school_groups.find((g) => g.id === id)
+    if (!group) throw new Error('Группа не найдена')
+    this.assertSchoolAdmin(group.school_id)
+    const { member_ids, ...rest } = patch
+    Object.assign(group, rest)
+    if (member_ids) {
+      this.db.group_members = this.db.group_members.filter((m) => m.group_id !== id)
+      for (const personId of member_ids) {
+        this.db.group_members.push({ group_id: id, person_id: personId, added_at: nowIso() })
+      }
+    }
+    this.persist({ table: 'school' })
+    return this.mockGroupView(id)
+  }
+
+  async deleteGroup(id: string): Promise<void> {
+    const group = this.db.school_groups.find((g) => g.id === id)
+    if (!group) return
+    this.assertSchoolAdmin(group.school_id)
+    this.db.school_groups = this.db.school_groups.filter((g) => g.id !== id)
+    this.db.group_members = this.db.group_members.filter((m) => m.group_id !== id)
+    this.db.teaching_assignments = this.db.teaching_assignments.filter((a) => a.group_id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  async createTeaching(input: {
+    school_id: string
+    subject_id: string
+    group_id: string
+    teacher_id: string | null
+  }): Promise<TeachingAssignment> {
+    this.assertSchoolAdmin(input.school_id)
+    const me = this.me()
+    const subject = this.mockSubjectView(input.subject_id)
+    const group = this.mockGroupView(input.group_id)
+
+    const space: Space = {
+      id: uid('space'),
+      name: `${subject.name} · ${group.name}`,
+      description: 'Курс собран из школы: предмет, группа и учитель',
+      owner_id: me.id,
+      color: subject.color,
+      invite_code: inviteCode(),
+      created_at: nowIso(),
+      join_open: true,
+      is_locked: false,
+      student_upload: false,
+      show_assignments: true,
+      show_calendar: true,
+      show_members: true,
+    }
+    this.db.spaces.push(space)
+    this.db.space_members.push({
+      space_id: space.id,
+      user_id: me.id,
+      permission: 'edit',
+      joined_at: nowIso(),
+    })
+    const teacher = this.db.school_people.find((p) => p.id === input.teacher_id)
+    if (teacher?.user_id && teacher.user_id !== me.id) {
+      this.db.space_members.push({
+        space_id: space.id,
+        user_id: teacher.user_id,
+        permission: 'edit',
+        joined_at: nowIso(),
+      })
+    }
+    for (const personId of group.member_ids) {
+      const person = this.db.school_people.find((p) => p.id === personId)
+      if (person?.user_id && !this.db.space_members.some((m) => m.space_id === space.id && m.user_id === person.user_id)) {
+        this.db.space_members.push({
+          space_id: space.id,
+          user_id: person.user_id,
+          permission: 'view',
+          joined_at: nowIso(),
+        })
+      }
+    }
+
+    const row: TeachingAssignment = {
+      id: uid('teaching'),
+      school_id: input.school_id,
+      subject_id: input.subject_id,
+      group_id: input.group_id,
+      teacher_id: input.teacher_id,
+      space_id: space.id,
+      created_at: nowIso(),
+    }
+    this.db.teaching_assignments.push(row)
+    this.persist({ table: 'school' })
+    this.persist({ table: 'spaces' })
+    return row
+  }
+
+  async deleteTeaching(id: string): Promise<void> {
+    const row = this.db.teaching_assignments.find((a) => a.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.teaching_assignments = this.db.teaching_assignments.filter((a) => a.id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  async signInToSchool(input: SchoolSignInInput): Promise<User> {
+    const code = input.code.trim().toUpperCase()
+    const login = input.login.trim().toLowerCase()
+    const school = this.db.schools.find((s) => s.code.toUpperCase() === code)
+    const person = school
+      ? this.db.school_people.find(
+          (p) => p.school_id === school.id && (p.login ?? '').toLowerCase() === login && p.is_active,
+        )
+      : undefined
+    const user = person?.user_id ? this.db.users.find((u) => u.id === person.user_id) : undefined
+    if (!user || user.password !== input.password) {
+      throw new Error('Неверный код школы, логин или пароль')
+    }
+    localStorage.setItem(SESSION_KEY, user.id)
+    const { password: _pw, ...rest } = user
+    void _pw
+    this.authListeners.forEach((cb) => cb(rest))
+    return rest
   }
 
   subscribe(cb: (e: ChangeEvent) => void): () => void {

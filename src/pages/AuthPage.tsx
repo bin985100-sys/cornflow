@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
   ArrowRight,
+  Building2,
   BookOpen,
   CalendarDays,
   FolderTree,
@@ -21,10 +22,10 @@ import { cx } from '@/lib/utils'
 import { Logo } from '@/components/layout/Logo'
 import { VideoPanel } from '@/components/landing/VideoPanel'
 
-type Mode = 'signin' | 'signup'
+type Mode = 'signin' | 'signup' | 'school'
 
 export function AuthPage() {
-  const { user, loading, signIn, signUp, signInWithGoogle } = useAuth()
+  const { user, loading, signIn, signInToSchool, signUp, signInWithGoogle } = useAuth()
   const toast = useToast()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -38,6 +39,9 @@ export function AuthPage() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [googleHint, setGoogleHint] = useState(false)
+  // школьный вход: код школы + выданный администратором логин
+  const [schoolCode, setSchoolCode] = useState('')
+  const [schoolLogin, setSchoolLogin] = useState('')
 
   if (!loading && user) return <Navigate to={next} replace />
 
@@ -46,7 +50,10 @@ export function AuthPage() {
     setBusy(true)
     try {
       setSignInFailed(false)
-      if (mode === 'signin') await signIn({ email, password })
+      if (mode === 'school') {
+        if (!signInToSchool) throw new Error('Вход по школьному аккаунту недоступен')
+        await signInToSchool({ code: schoolCode, login: schoolLogin, password })
+      } else if (mode === 'signin') await signIn({ email, password })
       else await signUp({ name, email, password, role })
       navigate(next, { replace: true })
     } catch (err) {
@@ -64,7 +71,7 @@ export function AuthPage() {
     }
     try {
       // роль и вкладку, с которой уходим, запоминаем: через Google они иначе теряются
-      db.rememberAuthMode?.(mode)
+      db.rememberAuthMode?.(mode === 'signup' ? 'signup' : 'signin')
       if (mode === 'signup') db.rememberPendingRole?.(role)
       // возвращаем ровно туда, куда пользователь шёл (по умолчанию — в приложение)
       await signInWithGoogle(`${window.location.origin}${next.startsWith('/') ? next : '/app'}`)
@@ -150,15 +157,22 @@ export function AuthPage() {
           </div>
 
           <h2 className="mt-6 text-[28px] font-bold tracking-[-0.02em] text-[#0B0C10] lg:mt-0">
-            {mode === 'signin' ? 'С возвращением' : 'Создать аккаунт'}
+            {mode === 'school'
+              ? 'Вход в школу'
+              : mode === 'signin'
+                ? 'С возвращением'
+                : 'Создать аккаунт'}
           </h2>
           <p className="mt-1.5 text-[14px] text-black/50">
-            {mode === 'signin'
-              ? 'Войдите, чтобы вернуться к своим материалам'
-              : 'Выберите роль — от неё зависит набор действий'}
+            {mode === 'school'
+              ? 'Логин и пароль выдаёт администратор школы вместе с её кодом'
+              : mode === 'signin'
+                ? 'Войдите, чтобы вернуться к своим материалам'
+                : 'Выберите роль — от неё зависит набор действий'}
           </p>
 
           {/* ---------------------------- Google ---------------------------- */}
+          {mode !== 'school' && (
           <button
             type="button"
             onClick={google}
@@ -167,6 +181,7 @@ export function AuthPage() {
             <GoogleMark />
             Продолжить с Google
           </button>
+          )}
 
           {googleHint && (
             <div className="mt-3 flex gap-2.5 rounded-2xl border border-black/[0.08] bg-[#F7F7F5] p-3.5 text-[12.5px] leading-relaxed text-black/60">
@@ -183,11 +198,13 @@ export function AuthPage() {
             </div>
           )}
 
-          <div className="my-6 flex items-center gap-3 text-[12px] text-black/35">
-            <span className="h-px flex-1 bg-black/[0.09]" />
-            или по почте
-            <span className="h-px flex-1 bg-black/[0.09]" />
-          </div>
+          {mode !== 'school' && (
+            <div className="my-6 flex items-center gap-3 text-[12px] text-black/35">
+              <span className="h-px flex-1 bg-black/[0.09]" />
+              или по почте
+              <span className="h-px flex-1 bg-black/[0.09]" />
+            </div>
+          )}
 
           {/* ----------------------------- форма ---------------------------- */}
           <form onSubmit={submit} className="space-y-4">
@@ -231,17 +248,42 @@ export function AuthPage() {
               </>
             )}
 
-            <Field label="Почта">
-              <input
-                className="cf-input"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@school.ru"
-                required
-                autoComplete="email"
-              />
-            </Field>
+            {mode === 'school' ? (
+              <>
+                <Field label="Код школы">
+                  <input
+                    className="cf-input font-mono uppercase"
+                    value={schoolCode}
+                    onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
+                    placeholder="A1B2C3"
+                    required
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label="Логин">
+                  <input
+                    className="cf-input font-mono"
+                    value={schoolLogin}
+                    onChange={(e) => setSchoolLogin(e.target.value)}
+                    placeholder="ivanov.p"
+                    required
+                    autoComplete="username"
+                  />
+                </Field>
+              </>
+            ) : (
+              <Field label="Почта">
+                <input
+                  className="cf-input"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@school.ru"
+                  required
+                  autoComplete="email"
+                />
+              </Field>
+            )}
 
             <Field label="Пароль">
               <input
@@ -280,20 +322,45 @@ export function AuthPage() {
               disabled={busy}
             >
               {busy && <Loader2 size={16} className="animate-spin" />}
-              {mode === 'signin' ? 'Войти' : 'Создать аккаунт'}
+              {mode === 'signup' ? 'Создать аккаунт' : 'Войти'}
               {!busy && <ArrowRight size={16} />}
             </button>
           </form>
 
-          <p className="mt-6 text-center text-[13.5px] text-black/50">
-            {mode === 'signin' ? 'Ещё нет аккаунта?' : 'Уже есть аккаунт?'}{' '}
-            <button
-              className="font-semibold text-[#2356FD] hover:underline"
-              onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-            >
-              {mode === 'signin' ? 'Зарегистрироваться' : 'Войти'}
-            </button>
-          </p>
+          {mode === 'school' ? (
+            <p className="mt-6 text-center text-[13.5px] text-black/50">
+              Обычный аккаунт?{' '}
+              <button
+                className="font-semibold text-[#2356FD] hover:underline"
+                onClick={() => setMode('signin')}
+              >
+                Войти по почте
+              </button>
+            </p>
+          ) : (
+            <>
+              <p className="mt-6 text-center text-[13.5px] text-black/50">
+                {mode === 'signin' ? 'Ещё нет аккаунта?' : 'Уже есть аккаунт?'}{' '}
+                <button
+                  className="font-semibold text-[#2356FD] hover:underline"
+                  onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
+                >
+                  {mode === 'signin' ? 'Зарегистрироваться' : 'Войти'}
+                </button>
+              </p>
+              <button
+                type="button"
+                onClick={() => setMode('school')}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-full border border-black/[0.12] bg-white px-4 py-3 text-[14px] font-semibold text-[#0B0C10] transition hover:bg-black/[0.03] active:scale-[.98]"
+              >
+                <Building2 size={16} className="text-[#2356FD]" />
+                Войти в школу
+              </button>
+              <p className="mt-2 text-center text-[12px] text-black/40">
+                Если логин и пароль выдал администратор школы
+              </p>
+            </>
+          )}
 
           {IS_MOCK && (
             <p className="mt-8 rounded-2xl border border-black/[0.08] bg-[#F7F7F5] p-3.5 text-[12px] leading-relaxed text-black/50">

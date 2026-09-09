@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
+  Building2,
   Check,
   CheckSquare,
   ChevronDown,
@@ -240,6 +241,7 @@ export function Sidebar() {
           <SidebarLink to="/app/tasks" icon={CheckSquare} label="Задачи" />
           {showCalendar && <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />}
           {isOwner && <SidebarLink to="/app/progress" icon={Users} label="Прогресс учеников" />}
+          <SidebarLink to="/app/school" icon={Building2} label="Школа" />
 
           {/* Избранное */}
           <SectionTitle

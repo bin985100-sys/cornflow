@@ -16,6 +16,7 @@ import { GradebookPage } from '@/pages/GradebookPage'
 import { LandingPage } from '@/pages/LandingPage'
 import { LibraryPage } from '@/pages/LibraryPage'
 import { ProgressPage } from '@/pages/ProgressPage'
+import { SchoolPage } from '@/pages/SchoolPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StarredPage } from '@/pages/StarredPage'
 import { TasksPage } from '@/pages/TasksPage'
@@ -72,6 +73,7 @@ function Shell() {
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="starred" element={<StarredPage />} />
         <Route path="progress" element={<ProgressPage />} />
+        <Route path="school" element={<SchoolPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/app" replace />} />
       </Route>

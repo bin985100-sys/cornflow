@@ -41,6 +41,20 @@ import type {
   QuizQuestion,
   QuizResult,
   QuizView,
+  AccountResult,
+  GroupKind,
+  GroupView,
+  School,
+  SchoolClass,
+  SchoolGroup,
+  SchoolParallel,
+  SchoolPerson,
+  SchoolRole,
+  SchoolSnapshot,
+  SchoolSubject,
+  SubjectAssessmentType,
+  SubjectView,
+  TeachingAssignment,
 } from '../types'
 
 /* ------------------------------- входные DTO ------------------------------ */
@@ -55,6 +69,41 @@ export interface SignUpInput {
 export interface SignInInput {
   email: string
   password: string
+}
+
+/** Вход по школьному аккаунту: код школы, логин и выданный админом пароль */
+export interface SchoolSignInInput {
+  code: string
+  login: string
+  password: string
+}
+
+export interface CreatePersonInput {
+  school_id: string
+  role: SchoolRole
+  last_name: string
+  first_name: string
+  middle_name?: string | null
+  class_id?: string | null
+  login?: string | null
+  note?: string | null
+}
+
+export interface CreateSubjectInput {
+  school_id: string
+  name: string
+  code?: string | null
+  color?: CardColor
+  class_ids?: string[]
+}
+
+export interface CreateGroupInput {
+  school_id: string
+  name: string
+  kind: GroupKind
+  parallel_id?: string | null
+  class_id?: string | null
+  member_ids?: string[]
 }
 
 export interface CreateSpaceInput {
@@ -118,6 +167,7 @@ export type ChangeEvent = {
     | 'quizzes'
     | 'quiz_attempts'
     | 'gradebook'
+    | 'school'
   spaceId?: string | null
 }
 
@@ -365,6 +415,83 @@ export interface DataProvider {
     note?: string | null,
   ): Promise<Attendance>
   clearAttendance(spaceId: string, studentId: string, date: string): Promise<void>
+
+  /* ------------------------------- школа ---------------------------------
+     Уровень над пространствами: справочник классов, людей, предметов и групп.
+     Всё меняет администратор; остальные только читают.
+     ---------------------------------------------------------------------- */
+
+  /** Школы, где текущий пользователь состоит хоть кем-то */
+  listSchools(): Promise<School[]>
+  createSchool(name: string): Promise<School>
+  updateSchool(id: string, patch: Partial<Pick<School, 'name' | 'code'>>): Promise<School>
+  deleteSchool(id: string): Promise<void>
+  /** Весь справочник школы за один запрос */
+  loadSchool(schoolId: string): Promise<SchoolSnapshot>
+
+  createParallel(schoolId: string, name: string): Promise<SchoolParallel>
+  updateParallel(id: string, patch: Partial<Pick<SchoolParallel, 'name' | 'position'>>): Promise<SchoolParallel>
+  deleteParallel(id: string): Promise<void>
+
+  createClass(schoolId: string, parallelId: string, name: string): Promise<SchoolClass>
+  updateClass(id: string, patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position'>>): Promise<SchoolClass>
+  deleteClass(id: string): Promise<void>
+
+  createPerson(input: CreatePersonInput): Promise<SchoolPerson>
+  /** Пакетное добавление: список людей одним запросом */
+  createPeople(inputs: CreatePersonInput[]): Promise<SchoolPerson[]>
+  updatePerson(
+    id: string,
+    patch: Partial<Pick<SchoolPerson,
+      'last_name' | 'first_name' | 'middle_name' | 'class_id' | 'login' | 'is_active' | 'note' | 'role'>>,
+  ): Promise<SchoolPerson>
+  deletePerson(id: string): Promise<void>
+
+  /** Завести аккаунты (логин + пароль). Работает только у администратора. */
+  createAccounts(
+    schoolId: string,
+    people: Array<{ person_id: string; login: string; password: string }>,
+  ): Promise<AccountResult[]>
+  /** Сменить пароль уже заведённому аккаунту */
+  setAccountPassword(
+    schoolId: string,
+    people: Array<{ person_id: string; password: string }>,
+  ): Promise<AccountResult[]>
+
+  createSubject(input: CreateSubjectInput): Promise<SubjectView>
+  updateSubject(
+    id: string,
+    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position'>> & { class_ids?: string[] },
+  ): Promise<SubjectView>
+  deleteSubject(id: string): Promise<void>
+  addAssessmentType(
+    subjectId: string,
+    input: Omit<SubjectAssessmentType, 'id' | 'subject_id' | 'created_at'>,
+  ): Promise<SubjectAssessmentType>
+  updateAssessmentType(
+    id: string,
+    patch: Partial<Omit<SubjectAssessmentType, 'id' | 'subject_id' | 'created_at'>>,
+  ): Promise<SubjectAssessmentType>
+  deleteAssessmentType(id: string): Promise<void>
+
+  createGroup(input: CreateGroupInput): Promise<GroupView>
+  updateGroup(
+    id: string,
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & { member_ids?: string[] },
+  ): Promise<GroupView>
+  deleteGroup(id: string): Promise<void>
+
+  /** Назначить предмет группе и учителю; создаёт пространство-журнал */
+  createTeaching(input: {
+    school_id: string
+    subject_id: string
+    group_id: string
+    teacher_id: string | null
+  }): Promise<TeachingAssignment>
+  deleteTeaching(id: string): Promise<void>
+
+  /** Вход по школьному аккаунту */
+  signInToSchool?(input: SchoolSignInInput): Promise<User>
 
   /* --- realtime --- */
   subscribe(cb: (e: ChangeEvent) => void): () => void

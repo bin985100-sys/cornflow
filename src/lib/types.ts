@@ -548,3 +548,130 @@ export interface GradebookSnapshot {
   attendance: Attendance[]
   students: Array<Pick<User, 'id' | 'name' | 'avatar' | 'role'>>
 }
+
+/* =========================================================================
+   Школа — уровень над пространствами (миграция 0011_school.sql)
+   ========================================================================= */
+
+export type SchoolRole = 'admin' | 'teacher' | 'student'
+export type GroupKind = 'class' | 'mixed'
+
+export interface School {
+  id: string
+  name: string
+  /** код школы: вводится на экране «Войти в школу» вместе с логином */
+  code: string
+  owner_id: string
+  created_at: string
+}
+
+/** Ученик, учитель или администратор школы */
+export interface SchoolPerson {
+  id: string
+  school_id: string
+  role: SchoolRole
+  last_name: string
+  first_name: string
+  middle_name: string | null
+  /** логин для входа в школу; пусто — аккаунт ещё не заводили */
+  login: string | null
+  /** привязанный аккаунт; пусто — человек есть в списке, но войти не может */
+  user_id: string | null
+  class_id: string | null
+  is_active: boolean
+  note: string | null
+  created_at: string
+}
+
+/** Параллель: «9», «11», «Начальная школа» — название произвольное */
+export interface SchoolParallel {
+  id: string
+  school_id: string
+  name: string
+  position: number
+  created_at: string
+}
+
+/** Класс внутри параллели: «А», «2», «Физмат» */
+export interface SchoolClass {
+  id: string
+  school_id: string
+  parallel_id: string
+  name: string
+  position: number
+  created_at: string
+}
+
+export interface SchoolSubject {
+  id: string
+  school_id: string
+  name: string
+  code: string | null
+  color: CardColor
+  position: number
+  created_at: string
+}
+
+/** Тип оценивания предмета — шаблон для журнала курса */
+export interface SubjectAssessmentType {
+  id: string
+  subject_id: string
+  name: string
+  code: string | null
+  weight: number
+  color: CardColor
+  counts_toward_grade: boolean
+  position: number
+  created_at: string
+}
+
+export interface SchoolGroup {
+  id: string
+  school_id: string
+  name: string
+  kind: GroupKind
+  parallel_id: string | null
+  class_id: string | null
+  created_at: string
+}
+
+export interface TeachingAssignment {
+  id: string
+  school_id: string
+  subject_id: string
+  group_id: string
+  teacher_id: string | null
+  space_id: string | null
+  created_at: string
+}
+
+/** Предмет вместе со списком классов и типами оценивания */
+export interface SubjectView extends SchoolSubject {
+  class_ids: string[]
+  assessment_types: SubjectAssessmentType[]
+}
+
+/** Группа вместе с составом */
+export interface GroupView extends SchoolGroup {
+  member_ids: string[]
+}
+
+/** Весь справочник школы за один запрос */
+export interface SchoolSnapshot {
+  school: School
+  role: SchoolRole
+  parallels: SchoolParallel[]
+  classes: SchoolClass[]
+  people: SchoolPerson[]
+  subjects: SubjectView[]
+  groups: GroupView[]
+  assignments: TeachingAssignment[]
+}
+
+/** Результат заведения аккаунтов серверной функцией */
+export interface AccountResult {
+  person_id: string
+  ok: boolean
+  error?: string
+  login?: string
+}

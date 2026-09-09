@@ -357,3 +357,48 @@ export function download(url: string, filename: string) {
   a.click()
   a.remove()
 }
+
+/* ---------------------------------------------------------------------------
+   Логины школьных аккаунтов
+--------------------------------------------------------------------------- */
+
+/** Кириллица → латиница. Нужна, чтобы логин можно было набрать на любой раскладке. */
+export function translit(text: string): string {
+  return text
+    .toLowerCase()
+    .split('')
+    .map((ch) => (ch in TRANSLIT ? TRANSLIT[ch] : ch))
+    .join('')
+}
+
+/**
+ * Логин школьного аккаунта: только латиница, цифры, точка, дефис и подчёркивание.
+ * Из этого логина и кода школы собирается служебная почта аккаунта, поэтому
+ * набор символов ограничен — иначе почта получится невалидной.
+ */
+export function normalizeLogin(text: string): string {
+  return translit(text)
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 40)
+}
+
+/** Логин по фамилии и имени: «Иванов Пётр» → «ivanov.p» */
+export function loginFromName(lastName: string, firstName: string): string {
+  const last = normalizeLogin(lastName)
+  const initial = normalizeLogin(firstName).slice(0, 1)
+  return initial ? `${last}.${initial}` : last
+}
+
+/** Служебная почта школьного аккаунта — та же формула, что в school-accounts */
+export function schoolLoginEmail(login: string, schoolCode: string): string {
+  return `${normalizeLogin(login)}@${schoolCode.trim().toLowerCase()}.cornflow.school`
+}
+
+/** Читаемый пароль: без похожих символов, чтобы не путать при выдаче */
+export function generatePassword(length = 8): string {
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789'
+  let out = ''
+  for (let i = 0; i < length; i++) out += abc[Math.floor(Math.random() * abc.length)]
+  return out
+}
