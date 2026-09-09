@@ -222,13 +222,20 @@ alter table public.school_groups            enable row level security;
 alter table public.group_members            enable row level security;
 alter table public.teaching_assignments     enable row level security;
 
+-- Прямое сравнение с владельцем обязательно: приложение вставляет школу
+-- с `returning *`, а при INSERT ... RETURNING политика чтения работает как
+-- дополнительный WITH CHECK. Через is_school_member() новую строку внутри
+-- того же оператора ещё не видно — см. 0012_schools_insert_returning.sql.
 drop policy if exists schools_read on public.schools;
-create policy schools_read on public.schools for select using (public.is_school_member(id));
+create policy schools_read on public.schools for select using (
+  owner_id = auth.uid() or public.is_school_member(id)
+);
 drop policy if exists schools_insert on public.schools;
 create policy schools_insert on public.schools for insert with check (owner_id = auth.uid());
 drop policy if exists schools_write on public.schools;
-create policy schools_write on public.schools for update using (public.is_school_admin(id))
-  with check (public.is_school_admin(id));
+create policy schools_write on public.schools for update
+  using (owner_id = auth.uid() or public.is_school_admin(id))
+  with check (owner_id = auth.uid() or public.is_school_admin(id));
 drop policy if exists schools_delete on public.schools;
 create policy schools_delete on public.schools for delete using (owner_id = auth.uid());
 
