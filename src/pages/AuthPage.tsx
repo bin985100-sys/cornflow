@@ -359,6 +359,12 @@ export function AuthPage() {
               <p className="mt-2 text-center text-[12px] text-black/40">
                 Если логин и пароль выдал администратор школы
               </p>
+              <p className="mt-4 text-center text-[12.5px] text-black/45">
+                Администратор школы?{' '}
+                <Link to="/admin/login" className="font-semibold text-[#2356FD] hover:underline">
+                  Войти в панель управления
+                </Link>
+              </p>
             </>
           )}
 

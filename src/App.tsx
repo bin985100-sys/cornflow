@@ -16,7 +16,19 @@ import { GradebookPage } from '@/pages/GradebookPage'
 import { LandingPage } from '@/pages/LandingPage'
 import { LibraryPage } from '@/pages/LibraryPage'
 import { ProgressPage } from '@/pages/ProgressPage'
-import { SchoolPage } from '@/pages/SchoolPage'
+import { AdminAuthPage } from '@/pages/admin/AdminAuthPage'
+import { AdminGate } from '@/components/admin/AdminGate'
+import { AdminOverviewPage } from '@/pages/admin/AdminOverviewPage'
+import { AdminSettingsPage } from '@/pages/admin/AdminSettingsPage'
+import {
+  AdminClassesPage,
+  AdminCoursesPage,
+  AdminGroupsPage,
+  AdminStudentsPage,
+  AdminSubjectsPage,
+  AdminTeachersPage,
+} from '@/pages/admin/sections'
+import { SchoolProvider } from '@/context/SchoolContext'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StarredPage } from '@/pages/StarredPage'
 import { TasksPage } from '@/pages/TasksPage'
@@ -40,6 +52,29 @@ function Shell() {
       {/* ---------------------------- публичная часть --------------------- */}
       <Route path="/" element={<LandingPage />} />
       <Route path="/auth" element={<AuthPage />} />
+
+      {/* ------------------------- админ-панель школы --------------------- */}
+      <Route path="/admin/login" element={<AdminAuthPage />} />
+      <Route
+        path="/admin"
+        element={
+          <Protected to="/admin/login">
+            <SchoolProvider>
+              <AdminGate />
+            </SchoolProvider>
+          </Protected>
+        }
+      >
+        <Route index element={<AdminOverviewPage />} />
+        <Route path="classes" element={<AdminClassesPage />} />
+        <Route path="students" element={<AdminStudentsPage />} />
+        <Route path="teachers" element={<AdminTeachersPage />} />
+        <Route path="subjects" element={<AdminSubjectsPage />} />
+        <Route path="groups" element={<AdminGroupsPage />} />
+        <Route path="courses" element={<AdminCoursesPage />} />
+        <Route path="settings" element={<AdminSettingsPage />} />
+        <Route path="*" element={<Navigate to="/admin" replace />} />
+      </Route>
 
       {/* ------------------------- приглашение по ссылке ------------------ */}
       <Route
@@ -73,7 +108,8 @@ function Shell() {
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="starred" element={<StarredPage />} />
         <Route path="progress" element={<ProgressPage />} />
-        <Route path="school" element={<SchoolPage />} />
+        {/* справочник школы переехал в админ-панель */}
+        <Route path="school" element={<Navigate to="/admin" replace />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/app" replace />} />
       </Route>
@@ -93,14 +129,15 @@ function Workspace({ children }: { children: ReactNode }) {
 }
 
 /** Закрытый маршрут: без сессии уводим на вход и запоминаем, куда шли. */
-function Protected({ children }: { children: ReactNode }) {
+function Protected({ children, to = '/auth' }: { children: ReactNode; to?: string }) {
   const { user, loading } = useAuth()
   const location = useLocation()
 
   if (loading) return <Splash />
   if (!user) {
     const next = encodeURIComponent(location.pathname + location.search)
-    return <Navigate to={`/auth?next=${next}`} replace />
+    // у админ-панели своя дверь, туда и уводим
+    return <Navigate to={to === '/auth' ? `/auth?next=${next}` : to} replace />
   }
   return <>{children}</>
 }

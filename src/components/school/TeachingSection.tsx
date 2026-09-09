@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { ArrowRight, BookOpen, Plus, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { db } from '@/lib/db'
-import { useApp } from '@/context/AppContext'
 import { useToast } from '@/context/ToastContext'
 import { ConfirmDialog, Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/primitives'
@@ -52,7 +51,6 @@ export function TeachingSection({ school }: { school: SchoolApi }) {
 
 function AssignmentRow({ assignment, school }: { assignment: TeachingAssignment; school: SchoolApi }) {
   const toast = useToast()
-  const app = useApp()
   const [confirm, setConfirm] = useState(false)
   const subject = school.subjects.find((s) => s.id === assignment.subject_id)
   const group = school.groups.find((g) => g.id === assignment.group_id)
@@ -73,7 +71,8 @@ function AssignmentRow({ assignment, school }: { assignment: TeachingAssignment;
           <Link
             to="/app/gradebook"
             className="cf-btn-ghost px-3 py-1.5 text-[12.5px]"
-            onClick={() => app.setSpaceId(assignment.space_id!)}
+            // приложение читает активное пространство из этого ключа
+            onClick={() => localStorage.setItem('cornflow.space', assignment.space_id!)}
           >
             Открыть журнал
           </Link>
