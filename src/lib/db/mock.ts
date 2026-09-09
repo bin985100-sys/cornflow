@@ -817,6 +817,26 @@ export class MockProvider implements DataProvider {
       }
     }
 
+    // журнал курса: шкала, периоды и типы работ — как в серверном режиме
+    await this.ensureGradebook(space.id)
+    if (subject.assessment_types.length) {
+      this.db.grade_categories = this.db.grade_categories.filter((c) => c.space_id !== space.id)
+      subject.assessment_types.forEach((t, i) =>
+        this.db.grade_categories.push({
+          id: uid('cat'),
+          space_id: space.id,
+          name: t.name,
+          code: t.code,
+          weight: t.weight,
+          color: t.color,
+          default_priority_id: null,
+          counts_toward_grade: t.counts_toward_grade,
+          position: i,
+          created_at: nowIso(),
+        }),
+      )
+    }
+
     const row: TeachingAssignment = {
       id: uid('teaching'),
       school_id: input.school_id,

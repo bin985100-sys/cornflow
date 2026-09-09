@@ -11,6 +11,7 @@ import { AssignmentsPage } from '@/pages/AssignmentsPage'
 import { AuthPage } from '@/pages/AuthPage'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { DashboardPage } from '@/pages/DashboardPage'
+import { DiaryPage } from '@/pages/DiaryPage'
 import { JoinPage } from '@/pages/JoinPage'
 import { GradebookPage } from '@/pages/GradebookPage'
 import { LandingPage } from '@/pages/LandingPage'
@@ -104,6 +105,8 @@ function Shell() {
         <Route path="assignments" element={<AssignmentsPage />} />
         <Route path="quizzes" element={<QuizzesPage />} />
         <Route path="gradebook" element={<GradebookPage />} />
+        {/* единый дневник ученика: все предметы на одном экране */}
+        <Route path="diary" element={<DiaryPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="starred" element={<StarredPage />} />

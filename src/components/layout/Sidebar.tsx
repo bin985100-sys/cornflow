@@ -232,8 +232,9 @@ export function Sidebar() {
               <SidebarLink to="/app/quizzes" icon={ListChecks} label="Тесты" />
             </>
           )}
+          {/* учителю — журнал текущего курса, ученику — дневник по всем предметам */}
           <SidebarLink
-            to="/app/gradebook"
+            to={isTeacher ? '/app/gradebook' : '/app/diary'}
             icon={GraduationCap}
             label={isTeacher ? 'Журнал' : 'Дневник'}
           />
