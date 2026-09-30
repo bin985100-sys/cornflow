@@ -46,6 +46,7 @@ import type {
   GroupView,
   School,
   SchoolClass,
+  SchoolDepartment,
   SchoolGroup,
   SchoolParallel,
   SchoolPerson,
@@ -94,6 +95,8 @@ export interface CreateSubjectInput {
   name: string
   code?: string | null
   color?: CardColor
+  /** МО, к которому относится предмет */
+  department_id?: string | null
   class_ids?: string[]
 }
 
@@ -104,6 +107,8 @@ export interface CreateGroupInput {
   parallel_id?: string | null
   class_id?: string | null
   member_ids?: string[]
+  /** учителя, ведущие группу; их может быть несколько */
+  teacher_ids?: string[]
 }
 
 export interface CreateSpaceInput {
@@ -458,10 +463,21 @@ export interface DataProvider {
     people: Array<{ person_id: string; password: string }>,
   ): Promise<AccountResult[]>
 
+  /** МО — методические объединения, к которым относятся предметы */
+  createDepartment(schoolId: string, name: string, color?: CardColor): Promise<SchoolDepartment>
+  updateDepartment(
+    id: string,
+    patch: Partial<Pick<SchoolDepartment, 'name' | 'color' | 'position'>>,
+  ): Promise<SchoolDepartment>
+  /** Предметы МО не удаляются — у них просто пропадает привязка */
+  deleteDepartment(id: string): Promise<void>
+
   createSubject(input: CreateSubjectInput): Promise<SubjectView>
   updateSubject(
     id: string,
-    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position'>> & { class_ids?: string[] },
+    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position' | 'department_id'>> & {
+      class_ids?: string[]
+    },
   ): Promise<SubjectView>
   deleteSubject(id: string): Promise<void>
   addAssessmentType(
@@ -477,17 +493,25 @@ export interface DataProvider {
   createGroup(input: CreateGroupInput): Promise<GroupView>
   updateGroup(
     id: string,
-    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & { member_ids?: string[] },
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & {
+      member_ids?: string[]
+      teacher_ids?: string[]
+    },
   ): Promise<GroupView>
   deleteGroup(id: string): Promise<void>
 
-  /** Назначить предмет группе и учителю; создаёт пространство-журнал */
+  /**
+   * Назначить предмет группе; создаёт пространство-журнал. Учителей может быть
+   * несколько — журнал у них один, все получают право редактирования.
+   */
   createTeaching(input: {
     school_id: string
     subject_id: string
     group_id: string
-    teacher_id: string | null
+    teacher_ids: string[]
   }): Promise<TeachingAssignment>
+  /** Сменить состав учителей курса; правит и участников пространства */
+  updateTeaching(id: string, patch: { teacher_ids: string[] }): Promise<TeachingAssignment>
   deleteTeaching(id: string): Promise<void>
 
   /** Вход по школьному аккаунту */

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { BookOpen, Building2, GraduationCap, KeyRound, Layers, Users } from 'lucide-react'
+import { BookOpen, Boxes, Building2, GraduationCap, KeyRound, Layers, Users } from 'lucide-react'
 import { useSchoolCtx } from '@/context/SchoolContext'
 
 /** Обзор: сколько чего заведено и что делать дальше. */
@@ -7,13 +7,15 @@ export function AdminOverviewPage() {
   const school = useSchoolCtx()
 
   const withoutAccount = school.people.filter((p) => !p.user_id && p.role !== 'admin').length
+  const groupsWithoutTeacher = school.groups.filter((g) => g.teacher_ids.length === 0).length
   const cards = [
     { to: '/admin/classes', icon: Layers, label: 'Классы', value: school.classes.length, hint: `параллелей: ${school.parallels.length}` },
     { to: '/admin/students', icon: Users, label: 'Ученики', value: school.students.length, hint: withoutAccount ? `без аккаунта: ${withoutAccount}` : 'у всех есть доступ' },
     { to: '/admin/teachers', icon: Users, label: 'Учителя', value: school.teachers.length, hint: 'включая администраторов' },
+    { to: '/admin/departments', icon: Boxes, label: 'МО', value: school.departments.length, hint: `без МО предметов: ${school.subjectsByDepartment(null).length}` },
     { to: '/admin/subjects', icon: BookOpen, label: 'Предметы', value: school.subjects.length, hint: 'с типами оценивания' },
-    { to: '/admin/groups', icon: GraduationCap, label: 'Группы', value: school.groups.length, hint: `смешанных: ${school.groups.filter((g) => g.kind === 'mixed').length}` },
-    { to: '/admin/courses', icon: Building2, label: 'Курсы', value: school.assignments.length, hint: 'предмет × группа × учитель' },
+    { to: '/admin/groups', icon: GraduationCap, label: 'Группы', value: school.groups.length, hint: groupsWithoutTeacher ? `без учителя: ${groupsWithoutTeacher}` : 'у всех есть учителя' },
+    { to: '/admin/courses', icon: Building2, label: 'Курсы', value: school.assignments.length, hint: 'предмет × группа × учителя' },
   ]
 
   return (
@@ -73,9 +75,18 @@ export function AdminOverviewPage() {
       {school.subjects.length > 0 && school.groups.length > 0 && school.assignments.length === 0 && (
         <Next
           title="Соберите курс"
-          body="Предмет + группа + учитель — журнал создастся сам, ученики группы окажутся в нём."
+          body="Предмет + группа + учителя — журнал создастся сам, ученики группы окажутся в нём."
           to="/admin/courses"
           action="К курсам"
+        />
+      )}
+      {school.groups.length > 0 && groupsWithoutTeacher > 0 && (
+        <Next
+          icon={GraduationCap}
+          title={`Групп без учителя: ${groupsWithoutTeacher}`}
+          body="К группе прикрепляются и ученики, и ведущие её учителя — их может быть несколько."
+          to="/admin/groups"
+          action="К группам"
         />
       )}
     </div>

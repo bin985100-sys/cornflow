@@ -1,5 +1,11 @@
 import { cx } from '@/lib/utils'
 
+/**
+ * Знак CornFlow: колонна и раскрытая книга. Без подложки — фон всегда виден
+ * насквозь. Рисунок в двух вариантах, потому что одним цветом он не читается
+ * на обоих фонах: на тёмном — исходный розово-кремовый, на светлом — тот же
+ * рисунок в тёмно-сливовом, иначе кремовые части сливаются с белым.
+ */
 export function Logo({
   size = 'md',
   compact = false,
@@ -7,7 +13,7 @@ export function Logo({
 }: {
   size?: 'md' | 'lg'
   compact?: boolean
-  /** 'light' — для тёмных и цветных фонов: белая подложка знака и белый текст */
+  /** 'light' — знак и текст для тёмных и цветных фонов */
   tone?: 'auto' | 'light'
 }) {
   const box = size === 'lg' ? 40 : 32
@@ -15,22 +21,34 @@ export function Logo({
 
   return (
     <div className="flex items-center gap-2.5">
-      <svg width={box} height={box} viewBox="0 0 32 32" className="shrink-0" aria-hidden>
-        <rect width="32" height="32" rx="9" fill={light ? '#FFFFFF' : 'var(--cf-blue-acc)'} />
-        <path
-          d="M16 6c3.6 0 6 2.7 6 7.2 0 5.2-2.6 9.4-6 12.8-3.4-3.4-6-7.6-6-12.8C10 8.7 12.4 6 16 6z"
-          fill={light ? '#2356FD' : 'var(--cf-yellow-bg)'}
+      <span
+        className="relative shrink-0"
+        style={{ width: box, height: box }}
+        aria-hidden
+      >
+        {/* на цветном фоне вариант один; в приложении — по теме */}
+        <img
+          src="/logo-mark.png"
+          alt=""
+          width={box}
+          height={box}
+          draggable={false}
+          className={cx(
+            'absolute inset-0 h-full w-full select-none object-contain',
+            light ? 'block' : 'hidden dark:block',
+          )}
         />
-        <path
-          d="M16 8.6v14.2"
-          stroke={light ? '#FFFFFF' : 'var(--cf-yellow-acc)'}
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-        <circle cx="13" cy="13" r="1.5" fill={light ? '#FFFFFF' : 'var(--cf-yellow-acc)'} />
-        <circle cx="19" cy="16" r="1.5" fill={light ? '#FFFFFF' : 'var(--cf-yellow-acc)'} />
-        <circle cx="13" cy="18.5" r="1.5" fill={light ? '#FFFFFF' : 'var(--cf-yellow-acc)'} />
-      </svg>
+        {!light && (
+          <img
+            src="/logo-mark-light.png"
+            alt=""
+            width={box}
+            height={box}
+            draggable={false}
+            className="absolute inset-0 h-full w-full select-none object-contain dark:hidden"
+          />
+        )}
+      </span>
       {!compact && (
         <span
           className={cx(

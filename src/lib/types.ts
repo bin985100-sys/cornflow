@@ -602,12 +602,27 @@ export interface SchoolClass {
   created_at: string
 }
 
+/**
+ * МО — методическое объединение. Предмет относится к одному МО:
+ * «Алгебра и начала математического анализа», «Геометрия» → МО «Математика».
+ */
+export interface SchoolDepartment {
+  id: string
+  school_id: string
+  name: string
+  color: CardColor
+  position: number
+  created_at: string
+}
+
 export interface SchoolSubject {
   id: string
   school_id: string
   name: string
   code: string | null
   color: CardColor
+  /** МО, к которому относится предмет; пусто — МО не задано */
+  department_id: string | null
   position: number
   created_at: string
 }
@@ -640,9 +655,12 @@ export interface TeachingAssignment {
   school_id: string
   subject_id: string
   group_id: string
+  /** первый учитель курса; оставлен для совместимости, полный список в teacher_ids */
   teacher_id: string | null
   space_id: string | null
   created_at: string
+  /** все учителя курса — журнал у них общий */
+  teacher_ids: string[]
 }
 
 /** Предмет вместе со списком классов и типами оценивания */
@@ -651,9 +669,11 @@ export interface SubjectView extends SchoolSubject {
   assessment_types: SubjectAssessmentType[]
 }
 
-/** Группа вместе с составом */
+/** Группа вместе с составом: ученики и ведущие её учителя */
 export interface GroupView extends SchoolGroup {
   member_ids: string[]
+  /** учителя группы — их может быть несколько */
+  teacher_ids: string[]
 }
 
 /** Весь справочник школы за один запрос */
@@ -663,6 +683,7 @@ export interface SchoolSnapshot {
   parallels: SchoolParallel[]
   classes: SchoolClass[]
   people: SchoolPerson[]
+  departments: SchoolDepartment[]
   subjects: SubjectView[]
   groups: GroupView[]
   assignments: TeachingAssignment[]

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { db } from '@/lib/db'
 import { useAuth } from '@/context/AuthContext'
+import { isOfflineError } from '@/lib/db/supabase-provider'
 import { useToast } from '@/context/ToastContext'
 import { IS_MOCK } from '@/lib/db'
 import type { Role } from '@/lib/types'
@@ -34,6 +35,7 @@ export function AuthPage() {
   const [mode, setMode] = useState<Mode>(params.get('mode') === 'signup' ? 'signup' : 'signin')
   const [role, setRole] = useState<Role>('teacher')
   const [signInFailed, setSignInFailed] = useState(false)
+  const [networkDown, setNetworkDown] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -50,6 +52,7 @@ export function AuthPage() {
     setBusy(true)
     try {
       setSignInFailed(false)
+      setNetworkDown(false)
       if (mode === 'school') {
         if (!signInToSchool) throw new Error('Вход по школьному аккаунту недоступен')
         await signInToSchool({ code: schoolCode, login: schoolLogin, password })
@@ -57,7 +60,9 @@ export function AuthPage() {
       else await signUp({ name, email, password, role })
       navigate(next, { replace: true })
     } catch (err) {
-      if (mode === 'signin') setSignInFailed(true)
+      // сеть молчит — подсказка про «три причины» тут только запутает
+      if (isOfflineError(err)) setNetworkDown(true)
+      else if (mode === 'signin') setSignInFailed(true)
       toast.error(err)
     } finally {
       setBusy(false)
@@ -298,7 +303,14 @@ export function AuthPage() {
               />
             </Field>
 
-            {signInFailed && mode === 'signin' && (
+            {networkDown && (
+              <div className="animate-fade-up rounded-2xl border border-[#E5484D]/25 bg-[#FDECEC] p-3.5 text-[12.5px] leading-relaxed text-[#8E2226]">
+                Сервер не отвечает — войти сейчас не получится. Дело не в логине и не в
+                пароле: база данных недоступна. Попробуйте через несколько минут.
+              </div>
+            )}
+
+            {signInFailed && !networkDown && mode === 'signin' && (
               <div className="animate-fade-up rounded-2xl border border-[#E5484D]/25 bg-[#FDECEC] p-3.5 text-[12.5px] leading-relaxed text-[#8E2226]">
                 Войти не удалось. Такое бывает по трём причинам: аккаунта с этой почтой ещё нет —{' '}
                 <button

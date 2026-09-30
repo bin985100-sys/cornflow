@@ -1,4 +1,5 @@
 import { ClassesSection } from '@/components/school/ClassesSection'
+import { DepartmentsSection } from '@/components/school/DepartmentsSection'
 import { GroupsSection } from '@/components/school/GroupsSection'
 import { PeopleSection } from '@/components/school/PeopleSection'
 import { SubjectsSection } from '@/components/school/SubjectsSection'
@@ -43,9 +44,20 @@ export function AdminTeachersPage() {
   )
 }
 
+export function AdminDepartmentsPage() {
+  return (
+    <Page
+      title="МО"
+      subtitle="Методические объединения. «Алгебра», «Геометрия» и «Математика» — это МО «Математика»."
+    >
+      <DepartmentsSection school={useSchoolCtx()} />
+    </Page>
+  )
+}
+
 export function AdminSubjectsPage() {
   return (
-    <Page title="Предметы" subtitle="Название, классы где предмет можно проводить, и типы оценивания для журнала.">
+    <Page title="Предметы" subtitle="МО, название, классы где предмет можно проводить, и типы оценивания для журнала.">
       <SubjectsSection school={useSchoolCtx()} />
     </Page>
   )
@@ -53,7 +65,7 @@ export function AdminSubjectsPage() {
 
 export function AdminGroupsPage() {
   return (
-    <Page title="Группы" subtitle="Группа класса или параллели — состав ограничен ими. Смешанная берёт кого угодно.">
+    <Page title="Группы" subtitle="Ученики и ведущие их учителя. Группа класса или параллели ограничена ими, смешанная берёт кого угодно.">
       <GroupsSection school={useSchoolCtx()} />
     </Page>
   )
@@ -61,7 +73,7 @@ export function AdminGroupsPage() {
 
 export function AdminCoursesPage() {
   return (
-    <Page title="Курсы" subtitle="Предмет × группа × учитель. Пространство с журналом создаётся само, ученики группы уже внутри.">
+    <Page title="Курсы" subtitle="Предмет × группа × учителя. Журнал создаётся сам и общий для всех учителей курса, ученики группы уже внутри.">
       <TeachingSection school={useSchoolCtx()} />
     </Page>
   )

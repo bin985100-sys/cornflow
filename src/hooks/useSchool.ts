@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { db } from '@/lib/db'
-import type { School, SchoolClass, SchoolPerson, SchoolSnapshot } from '@/lib/types'
+import type {
+  GroupView,
+  School,
+  SchoolClass,
+  SchoolPerson,
+  SchoolSnapshot,
+  SubjectView,
+} from '@/lib/types'
 
 const ACTIVE_KEY = 'cornflow.school'
 
@@ -10,6 +17,7 @@ const EMPTY: SchoolSnapshot = {
   parallels: [],
   classes: [],
   people: [],
+  departments: [],
   subjects: [],
   groups: [],
   assignments: [],
@@ -29,6 +37,12 @@ export interface SchoolApi extends SchoolSnapshot {
   students: SchoolPerson[]
   teachers: SchoolPerson[]
   classesByParallel: (parallelId: string) => SchoolClass[]
+  /** предметы МО; departmentId === null — предметы без МО */
+  subjectsByDepartment: (departmentId: string | null) => SubjectView[]
+  /** учителя группы, в том порядке, в котором их добавил администратор */
+  groupTeachers: (group: GroupView) => SchoolPerson[]
+  /** краткое «класс 9А» / «параллель 9» / «смешанная» */
+  groupScope: (group: GroupView) => string
 }
 
 /** Справочник школы: список школ, активная школа и её содержимое. */
@@ -87,7 +101,11 @@ export function useSchool(): SchoolApi {
       const klass = data.classes.find((c) => c.id === classId)
       if (!klass) return '—'
       const parallel = data.parallels.find((p) => p.id === klass.parallel_id)
-      return `${parallel?.name ?? ''}${klass.name}`.trim() || klass.name
+      const prefix = parallel?.name ?? ''
+      // «9» + «А» = 9А, но «Начальная школа» + «Ромашка» = «Начальная школа Ромашка»:
+      // слитно только когда параллель — число, а класс — короткая литера
+      const glue = /^\d+$/.test(prefix) && klass.name.length <= 2 ? '' : ' '
+      return `${prefix}${glue}${klass.name}`.trim() || klass.name
     },
     [data.classes, data.parallels],
   )
@@ -103,6 +121,30 @@ export function useSchool(): SchoolApi {
   const classesByParallel = useCallback(
     (parallelId: string) => data.classes.filter((c) => c.parallel_id === parallelId),
     [data.classes],
+  )
+
+  const subjectsByDepartment = useCallback(
+    (departmentId: string | null) =>
+      data.subjects.filter((s) => (s.department_id ?? null) === departmentId),
+    [data.subjects],
+  )
+
+  const groupTeachers = useCallback(
+    (group: GroupView) =>
+      group.teacher_ids
+        .map((id) => data.people.find((p) => p.id === id))
+        .filter((p): p is SchoolPerson => Boolean(p)),
+    [data.people],
+  )
+
+  const groupScope = useCallback(
+    (group: GroupView) => {
+      if (group.kind === 'mixed') return 'смешанная'
+      if (group.class_id) return `класс ${classLabel(group.class_id)}`
+      const parallel = data.parallels.find((p) => p.id === group.parallel_id)
+      return parallel ? `параллель ${parallel.name}` : 'класс не выбран'
+    },
+    [classLabel, data.parallels],
   )
 
   const students = useMemo(() => data.people.filter((p) => p.role === 'student'), [data.people])
@@ -124,5 +166,8 @@ export function useSchool(): SchoolApi {
     students,
     teachers,
     classesByParallel,
+    subjectsByDepartment,
+    groupTeachers,
+    groupScope,
   }
 }

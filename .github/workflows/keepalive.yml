@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------------------
+# Не даём проекту Supabase заснуть.
+#
+# На бесплатном тарифе проект ставят на паузу, если за 7 дней к базе почти не
+# обращались, и поднимать его приходится руками через дашборд — до этого
+# приложение просто не открывается. Нескольких обращений к базе в день
+# достаточно, чтобы пауза не наступила.
+#
+# Поэтому раз в сутки дёргаем функцию touch_heartbeat() (миграция
+# 0014_heartbeat.sql) — это настоящая запись в базу, а не просто ping
+# по HTTP. Переменные берём те же, что и сборка зеркала.
+#
+# Важно: это работает, только пока репозиторий активен. GitHub отключает
+# расписание в репозиториях, где 60 дней не было коммитов, — тогда workflow
+# придётся включить кнопкой Run workflow. Совсем без пауз бывает только на
+# платном тарифе Supabase.
+# ---------------------------------------------------------------------------
+name: Supabase keepalive
+
+on:
+  schedule:
+    # каждый день в 6:17 UTC — время нарочно не круглое, в :00 очередь GitHub
+    # перегружена и запуск может сдвинуться на десятки минут
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Razbor peremennyh
+        env:
+          URL: ${{ vars.VITE_SUPABASE_URL }}
+          KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          KEYS: ${{ vars.KEYS }}
+        run: |
+          if [ -n "$KEYS" ]; then
+            while IFS= read -r line; do
+              line="$(printf '%s' "$line" | tr -d '\r')"
+              case "$line" in
+                VITE_SUPABASE_URL=*)      [ -z "$URL" ] && URL="${line#*=}" ;;
+                VITE_SUPABASE_ANON_KEY=*) [ -z "$KEY" ] && KEY="${line#*=}" ;;
+              esac
+            done < <(printf '%s\n' "$KEYS")
+          fi
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::error::Ne zadany VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY v Variables."
+            exit 1
+          fi
+          {
+            echo "SB_URL=${URL%/}"
+            echo "SB_KEY=$KEY"
+          } >> "$GITHUB_ENV"
+
+      - name: Otmetka v baze
+        run: |
+          code=$(curl -sS -o /tmp/out.txt -w '%{http_code}' \
+            -X POST "$SB_URL/rest/v1/rpc/touch_heartbeat" \
+            -H "apikey: $SB_KEY" \
+            -H "Authorization: Bearer $SB_KEY" \
+            -H "Content-Type: application/json" \
+            --max-time 30 -d '{}') || true
+          echo "touch_heartbeat -> HTTP $code"
+          cat /tmp/out.txt || true
+
+          # Если функции ещё нет (миграция 0014 не прогнана) — падать не нужно:
+          # обычное чтение тоже считается обращением к базе.
+          if [ "$code" != "200" ]; then
+            echo "::warning::touch_heartbeat nedostupna (HTTP $code), probuyem chtenie"
+            code=$(curl -sS -o /tmp/out2.txt -w '%{http_code}' \
+              "$SB_URL/rest/v1/heartbeat?select=pinged_at&limit=1" \
+              -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" --max-time 30) || true
+            echo "select heartbeat -> HTTP $code"
+            cat /tmp/out2.txt || true
+          fi
+
+          # 5xx и пустой ответ означают, что проект уже лежит — сообщаем громко
+          case "$code" in
+            200|206) echo "Baza otvechaet, proekt aktiven." ;;
+            000)     echo "::error::Supabase ne otvetil vovse. Vozmozhno, proekt na pauze."; exit 1 ;;
+            5*)      echo "::error::Supabase otvetil $code. Vozmozhno, proekt na pauze."; exit 1 ;;
+            *)       echo "::error::Neozhidannyy otvet $code."; exit 1 ;;
+          esac

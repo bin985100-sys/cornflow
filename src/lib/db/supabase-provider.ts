@@ -1,6 +1,7 @@
 import type {
   Assignment,
   AssignmentView,
+  CardColor,
   Attendance,
   AttendanceStatus,
   CriterionScore,
@@ -41,6 +42,7 @@ import type {
   GroupView,
   School,
   SchoolClass,
+  SchoolDepartment,
   SchoolGroup,
   SchoolParallel,
   SchoolPerson,
@@ -95,9 +97,21 @@ function unwrap<T>(res: { data: T | null; error: { message: string; code?: strin
 }
 
 /** Понятный текст вместо служебного сообщения Postgres. */
+/** Сетевой сбой: сервер не ответил вовсе — это не ошибка данных */
+export function isOfflineError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? '')
+  return (
+    /Failed to fetch|NetworkError|Load failed|ERR_NETWORK|ERR_CONNECTION|fetch failed/i.test(msg) ||
+    /не удаётся связаться с сервером/i.test(msg)
+  )
+}
+
 function humanError(error: { message: string; code?: string }): string {
   if (error.code === '23505' || error.message.includes('duplicate key value')) {
     return 'Запись с таким названием в этом пространстве уже есть'
+  }
+  if (isOfflineError(error)) {
+    return 'Не удаётся связаться с сервером. Проверьте соединение и попробуйте ещё раз.'
   }
   return error.message
 }
@@ -1705,19 +1719,35 @@ export class SupabaseProvider implements DataProvider {
 
   async loadSchool(schoolId: string): Promise<SchoolSnapshot> {
     const me = await this.requireUser()
-    const [school, parallels, classes, people, subjects, subjectClasses, types, groups, members, assignments] =
-      await Promise.all([
-        supabase().from('schools').select('*').eq('id', schoolId).single(),
-        supabase().from('school_parallels').select('*').eq('school_id', schoolId).order('position'),
-        supabase().from('school_classes').select('*').eq('school_id', schoolId).order('position'),
-        supabase().from('school_people').select('*').eq('school_id', schoolId).order('last_name'),
-        supabase().from('school_subjects').select('*').eq('school_id', schoolId).order('position'),
-        supabase().from('subject_classes').select('*'),
-        supabase().from('subject_assessment_types').select('*').order('position'),
-        supabase().from('school_groups').select('*').eq('school_id', schoolId).order('name'),
-        supabase().from('group_members').select('*'),
-        supabase().from('teaching_assignments').select('*').eq('school_id', schoolId),
-      ])
+    const [
+      school,
+      parallels,
+      classes,
+      people,
+      departments,
+      subjects,
+      subjectClasses,
+      types,
+      groups,
+      members,
+      groupTeachers,
+      assignments,
+      assignmentTeachers,
+    ] = await Promise.all([
+      supabase().from('schools').select('*').eq('id', schoolId).single(),
+      supabase().from('school_parallels').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('school_classes').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('school_people').select('*').eq('school_id', schoolId).order('last_name'),
+      supabase().from('school_departments').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('school_subjects').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('subject_classes').select('*'),
+      supabase().from('subject_assessment_types').select('*').order('position'),
+      supabase().from('school_groups').select('*').eq('school_id', schoolId).order('name'),
+      supabase().from('group_members').select('*'),
+      supabase().from('group_teachers').select('*'),
+      supabase().from('teaching_assignments').select('*').eq('school_id', schoolId),
+      supabase().from('teaching_teachers').select('*'),
+    ])
 
     if (school.error) throw new Error(humanError(school.error))
     const s = school.data as unknown as School
@@ -1728,6 +1758,12 @@ export class SupabaseProvider implements DataProvider {
     const linkRows = (subjectClasses.data ?? []) as Array<{ subject_id: string; class_id: string }>
     const typeRows = (types.data ?? []) as unknown as SubjectAssessmentType[]
     const memberRows = (members.data ?? []) as Array<{ group_id: string; person_id: string }>
+    const groupTeacherRows = (groupTeachers.data ?? []) as Array<{ group_id: string; person_id: string }>
+    const assignmentRows = (assignments.data ?? []) as unknown as TeachingAssignment[]
+    const assignmentTeacherRows = (assignmentTeachers.data ?? []) as Array<{
+      assignment_id: string
+      teacher_id: string
+    }>
 
     const mine = peopleRows.find((p) => p.user_id === me.id)
     const role: SchoolRole = s.owner_id === me.id ? 'admin' : (mine?.role ?? 'student')
@@ -1738,6 +1774,7 @@ export class SupabaseProvider implements DataProvider {
       parallels: (parallels.data ?? []) as unknown as SchoolParallel[],
       classes: (classes.data ?? []) as unknown as SchoolClass[],
       people: peopleRows,
+      departments: (departments.data ?? []) as unknown as SchoolDepartment[],
       subjects: subjectRows.map((sub) => ({
         ...sub,
         class_ids: linkRows.filter((l) => l.subject_id === sub.id).map((l) => l.class_id),
@@ -1746,8 +1783,14 @@ export class SupabaseProvider implements DataProvider {
       groups: groupRows.map((g) => ({
         ...g,
         member_ids: memberRows.filter((m) => m.group_id === g.id).map((m) => m.person_id),
+        teacher_ids: groupTeacherRows.filter((t) => t.group_id === g.id).map((t) => t.person_id),
       })),
-      assignments: (assignments.data ?? []) as unknown as TeachingAssignment[],
+      assignments: assignmentRows.map((a) => ({
+        ...a,
+        teacher_ids: assignmentTeacherRows
+          .filter((t) => t.assignment_id === a.id)
+          .map((t) => t.teacher_id),
+      })),
     }
   }
 
@@ -1905,6 +1948,38 @@ export class SupabaseProvider implements DataProvider {
     return this.callAccounts('set_password', schoolId, people)
   }
 
+  /* ------------------------------- МО ----------------------------------- */
+
+  async createDepartment(schoolId: string, name: string, color?: CardColor): Promise<SchoolDepartment> {
+    const row = unwrap(
+      await supabase()
+        .from('school_departments')
+        .insert({ school_id: schoolId, name: name.trim(), color: color ?? colorFromString(name) })
+        .select()
+        .single(),
+    ) as unknown as SchoolDepartment
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updateDepartment(
+    id: string,
+    patch: Partial<Pick<SchoolDepartment, 'name' | 'color' | 'position'>>,
+  ): Promise<SchoolDepartment> {
+    const row = unwrap(
+      await supabase().from('school_departments').update(patch).eq('id', id).select().single(),
+    ) as unknown as SchoolDepartment
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteDepartment(id: string): Promise<void> {
+    // предметы остаются, у них просто пропадает МО — так велит on delete set null
+    const { error } = await supabase().from('school_departments').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
   /* ---------------------------- предметы -------------------------------- */
 
   private async subjectView(id: string): Promise<SubjectView> {
@@ -1930,6 +2005,7 @@ export class SupabaseProvider implements DataProvider {
           name: input.name.trim(),
           code: input.code ?? null,
           color: input.color ?? colorFromString(input.name),
+          department_id: input.department_id ?? null,
         })
         .select()
         .single(),
@@ -1945,7 +2021,9 @@ export class SupabaseProvider implements DataProvider {
 
   async updateSubject(
     id: string,
-    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position'>> & { class_ids?: string[] },
+    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position' | 'department_id'>> & {
+      class_ids?: string[]
+    },
   ): Promise<SubjectView> {
     const { class_ids, ...rest } = patch
     if (Object.keys(rest).length) {
@@ -2005,14 +2083,16 @@ export class SupabaseProvider implements DataProvider {
   /* ----------------------------- группы --------------------------------- */
 
   private async groupView(id: string): Promise<GroupView> {
-    const [group, members] = await Promise.all([
+    const [group, members, teachers] = await Promise.all([
       supabase().from('school_groups').select('*').eq('id', id).single(),
       supabase().from('group_members').select('person_id').eq('group_id', id),
+      supabase().from('group_teachers').select('person_id').eq('group_id', id),
     ])
     if (group.error) throw new Error(humanError(group.error))
     return {
       ...(group.data as unknown as SchoolGroup),
       member_ids: ((members.data ?? []) as Array<{ person_id: string }>).map((m) => m.person_id),
+      teacher_ids: ((teachers.data ?? []) as Array<{ person_id: string }>).map((t) => t.person_id),
     }
   }
 
@@ -2035,15 +2115,23 @@ export class SupabaseProvider implements DataProvider {
         .from('group_members')
         .insert(input.member_ids.map((p) => ({ group_id: group.id, person_id: p })))
     }
+    if (input.teacher_ids?.length) {
+      await supabase()
+        .from('group_teachers')
+        .insert(input.teacher_ids.map((p) => ({ group_id: group.id, person_id: p })))
+    }
     this.listeners.forEach((l) => l({ table: 'school' }))
     return this.groupView(group.id)
   }
 
   async updateGroup(
     id: string,
-    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & { member_ids?: string[] },
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & {
+      member_ids?: string[]
+      teacher_ids?: string[]
+    },
   ): Promise<GroupView> {
-    const { member_ids, ...rest } = patch
+    const { member_ids, teacher_ids, ...rest } = patch
     if (Object.keys(rest).length) {
       const { error } = await supabase().from('school_groups').update(rest).eq('id', id)
       if (error) throw new Error(humanError(error))
@@ -2054,6 +2142,14 @@ export class SupabaseProvider implements DataProvider {
         await supabase()
           .from('group_members')
           .insert(member_ids.map((p) => ({ group_id: id, person_id: p })))
+      }
+    }
+    if (teacher_ids) {
+      await supabase().from('group_teachers').delete().eq('group_id', id)
+      if (teacher_ids.length) {
+        await supabase()
+          .from('group_teachers')
+          .insert(teacher_ids.map((p) => ({ group_id: id, person_id: p })))
       }
     }
     this.listeners.forEach((l) => l({ table: 'school' }))
@@ -2072,19 +2168,21 @@ export class SupabaseProvider implements DataProvider {
     school_id: string
     subject_id: string
     group_id: string
-    teacher_id: string | null
+    teacher_ids: string[]
   }): Promise<TeachingAssignment> {
     const me = await this.requireUser()
     const subject = await this.subjectView(input.subject_id)
     const group = await this.groupView(input.group_id)
+    const teacherIds = [...new Set(input.teacher_ids.filter(Boolean))]
 
-    // пространство-журнал: у каждого учителя своё на каждый предмет
+    // пространство-журнал курса: предмет × группа. Учителей может быть
+    // несколько, но журнал один — иначе оценки одной группы разъехались бы.
     const space = unwrap(
       await supabase()
         .from('spaces')
         .insert({
           name: `${subject.name} · ${group.name}`,
-          description: 'Курс собран из школы: предмет, группа и учитель',
+          description: 'Курс собран из школы: предмет, группа и учителя',
           owner_id: me.id,
           color: subject.color,
           invite_code: inviteCode(),
@@ -2095,27 +2193,38 @@ export class SupabaseProvider implements DataProvider {
         .single(),
     ) as unknown as Space
 
-    // участники: администратор, учитель и ученики группы
-    const { data: peopleRows } = await supabase()
-      .from('school_people')
-      .select('id, user_id, role')
-      .eq('school_id', input.school_id)
-    const people = (peopleRows ?? []) as Array<{ id: string; user_id: string | null; role: SchoolRole }>
+    const row = unwrap(
+      await supabase()
+        .from('teaching_assignments')
+        .insert({
+          school_id: input.school_id,
+          subject_id: input.subject_id,
+          group_id: input.group_id,
+          // teacher_id оставлен для совместимости: первый из списка
+          teacher_id: teacherIds[0] ?? null,
+          space_id: space.id,
+        })
+        .select()
+        .single(),
+    ) as unknown as TeachingAssignment
 
-    const members: Array<{ space_id: string; user_id: string; permission: Permission }> = [
-      { space_id: space.id, user_id: me.id, permission: 'edit' },
-    ]
-    const teacher = people.find((p) => p.id === input.teacher_id)
-    if (teacher?.user_id && teacher.user_id !== me.id) {
-      members.push({ space_id: space.id, user_id: teacher.user_id, permission: 'edit' })
+    if (teacherIds.length) {
+      await supabase()
+        .from('teaching_teachers')
+        .upsert(
+          teacherIds.map((t) => ({ assignment_id: row.id, teacher_id: t })),
+          { onConflict: 'assignment_id,teacher_id', ignoreDuplicates: true },
+        )
+      // учитель курса — он же учитель группы
+      await supabase()
+        .from('group_teachers')
+        .upsert(
+          teacherIds.map((t) => ({ group_id: input.group_id, person_id: t })),
+          { onConflict: 'group_id,person_id', ignoreDuplicates: true },
+        )
     }
-    for (const personId of group.member_ids) {
-      const person = people.find((p) => p.id === personId)
-      if (person?.user_id && !members.some((m) => m.user_id === person.user_id)) {
-        members.push({ space_id: space.id, user_id: person.user_id, permission: 'view' })
-      }
-    }
-    await supabase().from('space_members').upsert(members, { onConflict: 'space_id,user_id' })
+
+    await this.syncTeachingMembers(space.id, input.school_id, teacherIds, group.member_ids, me.id)
 
     // журнал: типы работ берём из предмета, если они там заданы
     await this.ensureGradebook(space.id)
@@ -2134,23 +2243,92 @@ export class SupabaseProvider implements DataProvider {
       )
     }
 
-    const row = unwrap(
-      await supabase()
-        .from('teaching_assignments')
-        .insert({
-          school_id: input.school_id,
-          subject_id: input.subject_id,
-          group_id: input.group_id,
-          teacher_id: input.teacher_id,
-          space_id: space.id,
-        })
-        .select()
-        .single(),
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    this.listeners.forEach((l) => l({ table: 'spaces' }))
+    return { ...row, teacher_ids: teacherIds }
+  }
+
+  async updateTeaching(id: string, patch: { teacher_ids: string[] }): Promise<TeachingAssignment> {
+    const me = await this.requireUser()
+    const teacherIds = [...new Set(patch.teacher_ids.filter(Boolean))]
+    const current = unwrap(
+      await supabase().from('teaching_assignments').select('*').eq('id', id).single(),
     ) as unknown as TeachingAssignment
+
+    await supabase().from('teaching_teachers').delete().eq('assignment_id', id)
+    if (teacherIds.length) {
+      await supabase()
+        .from('teaching_teachers')
+        .insert(teacherIds.map((t) => ({ assignment_id: id, teacher_id: t })))
+      await supabase()
+        .from('group_teachers')
+        .upsert(
+          teacherIds.map((t) => ({ group_id: current.group_id, person_id: t })),
+          { onConflict: 'group_id,person_id', ignoreDuplicates: true },
+        )
+    }
+    await supabase()
+      .from('teaching_assignments')
+      .update({ teacher_id: teacherIds[0] ?? null })
+      .eq('id', id)
+
+    if (current.space_id) {
+      const group = await this.groupView(current.group_id)
+      await this.syncTeachingMembers(
+        current.space_id,
+        current.school_id,
+        teacherIds,
+        group.member_ids,
+        me.id,
+      )
+    }
 
     this.listeners.forEach((l) => l({ table: 'school' }))
     this.listeners.forEach((l) => l({ table: 'spaces' }))
-    return row
+    return { ...current, teacher_id: teacherIds[0] ?? null, teacher_ids: teacherIds }
+  }
+
+  /**
+   * Участники журнала курса: администратор и учителя правят, ученики группы
+   * читают. Учителя, снятые с курса, теряют доступ — остальных не трогаем,
+   * чтобы не выбросить людей, добавленных в пространство вручную.
+   */
+  private async syncTeachingMembers(
+    spaceId: string,
+    schoolId: string,
+    teacherIds: string[],
+    studentIds: string[],
+    ownerUserId: string,
+  ): Promise<void> {
+    const { data: peopleRows } = await supabase()
+      .from('school_people')
+      .select('id, user_id, role')
+      .eq('school_id', schoolId)
+    const people = (peopleRows ?? []) as Array<{ id: string; user_id: string | null; role: SchoolRole }>
+    const userOf = (personId: string) => people.find((p) => p.id === personId)?.user_id ?? null
+
+    const members: Array<{ space_id: string; user_id: string; permission: Permission }> = [
+      { space_id: spaceId, user_id: ownerUserId, permission: 'edit' },
+    ]
+    const push = (userId: string | null, permission: Permission) => {
+      if (!userId) return
+      if (members.some((m) => m.user_id === userId)) return
+      members.push({ space_id: spaceId, user_id: userId, permission })
+    }
+    teacherIds.forEach((id) => push(userOf(id), 'edit'))
+    studentIds.forEach((id) => push(userOf(id), 'view'))
+
+    await supabase().from('space_members').upsert(members, { onConflict: 'space_id,user_id' })
+
+    // снятые учителя: это те, кто есть в школе учителем, имеет доступ на правку,
+    // но в текущем списке курса не значится
+    const keep = new Set(members.map((m) => m.user_id))
+    const dropped = people
+      .filter((p) => (p.role === 'teacher' || p.role === 'admin') && p.user_id && !keep.has(p.user_id))
+      .map((p) => p.user_id as string)
+    if (dropped.length) {
+      await supabase().from('space_members').delete().eq('space_id', spaceId).in('user_id', dropped)
+    }
   }
 
   async deleteTeaching(id: string): Promise<void> {
@@ -2209,7 +2387,31 @@ export class SupabaseProvider implements DataProvider {
         'criterion_scores',
         'attendance',
       ]
+      // справочник школы: любая правка админа должна долетать до учителей
+      const schoolTables = [
+        'schools',
+        'school_people',
+        'school_parallels',
+        'school_classes',
+        'school_departments',
+        'school_subjects',
+        'subject_classes',
+        'subject_assessment_types',
+        'school_groups',
+        'group_members',
+        'group_teachers',
+        'teaching_assignments',
+        'teaching_teachers',
+      ]
       const channel = supabase().channel('cornflow-changes')
+      schoolTables.forEach((table) => {
+        channel.on(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          'postgres_changes' as any,
+          { event: '*', schema: 'public', table },
+          () => this.listeners.forEach((l) => l({ table: 'school' })),
+        )
+      })
       gradebookTables.forEach((table) => {
         channel.on(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

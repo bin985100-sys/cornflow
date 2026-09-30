@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, Plus, Search, Trash2, Users } from 'lucide-react'
+import { Check, Plus, Search, Trash2, UserCog, Users } from 'lucide-react'
 import { db } from '@/lib/db'
 import { useToast } from '@/context/ToastContext'
 import { ConfirmDialog, Modal } from '@/components/ui/Modal'
@@ -13,7 +13,9 @@ import type { GroupKind, GroupView } from '@/lib/types'
  *   • группа класса или параллели — состав ограничен ими;
  *   • смешанная — любые ученики из любых классов и параллелей.
  *
- * На группу вешается предмет с учителем — из этой тройки вырастает курс.
+ * К группе прикрепляются и ученики, и учителя, которые её ведут, — учителей
+ * может быть несколько. Дальше на группу вешается предмет, и из этого
+ * вырастает курс со своим журналом.
  */
 export function GroupsSection({ school }: { school: SchoolApi }) {
   const [creating, setCreating] = useState(false)
@@ -32,7 +34,7 @@ export function GroupsSection({ school }: { school: SchoolApi }) {
       {school.groups.length === 0 ? (
         <EmptyState
           title="Групп пока нет"
-          description="Группа — это состав, которому потом назначается предмет и учитель."
+          description="Группа — это ученики и ведущие их учителя. Дальше группе назначается предмет."
           art="tasks"
         />
       ) : (
@@ -53,12 +55,8 @@ function GroupCard({ group, school }: { group: GroupView; school: SchoolApi }) {
   const [editing, setEditing] = useState(false)
   const [confirm, setConfirm] = useState(false)
 
-  const scope =
-    group.kind === 'mixed'
-      ? 'смешанная'
-      : group.class_id
-        ? `класс ${school.classLabel(group.class_id)}`
-        : `параллель ${school.parallels.find((p) => p.id === group.parallel_id)?.name ?? ''}`
+  const scope = school.groupScope(group)
+  const teachers = school.groupTeachers(group)
 
   return (
     <div className="cf-card p-4">
@@ -83,6 +81,24 @@ function GroupCard({ group, school }: { group: GroupView; school: SchoolApi }) {
           ? 'Пока пусто — добавьте учеников'
           : `Учеников: ${group.member_ids.length}`}
       </p>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <UserCog size={13} className="text-ink-3" />
+        {teachers.length === 0 ? (
+          <span className="text-[12.5px] text-ink-3">Учителя не назначены</span>
+        ) : (
+          teachers.map((t) => (
+            <span
+              key={t.id}
+              className="cf-pill px-2.5 py-[3px] text-[11.5px] font-semibold"
+              title={t.user_id ? undefined : 'Аккаунт не заведён — в журнал не попадёт'}
+            >
+              {school.fullName(t)}
+              {!t.user_id && ' ·'}
+            </span>
+          ))
+        )}
+      </div>
 
       {editing && <GroupModal school={school} group={group} onClose={() => setEditing(false)} />}
 
@@ -122,6 +138,7 @@ function GroupModal({
   const [parallelId, setParallelId] = useState(group?.parallel_id ?? '')
   const [classId, setClassId] = useState(group?.class_id ?? '')
   const [members, setMembers] = useState<string[]>(group?.member_ids ?? [])
+  const [teacherIds, setTeacherIds] = useState<string[]>(group?.teacher_ids ?? [])
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -145,6 +162,10 @@ function GroupModal({
     setMembers((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]))
   }
 
+  function toggleTeacher(id: string) {
+    setTeacherIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]))
+  }
+
   async function save() {
     if (!school.schoolId || !name.trim()) return
     if (kind === 'class' && !classId && !parallelId) {
@@ -158,6 +179,7 @@ function GroupModal({
         parallel_id: kind === 'class' ? parallelId || null : null,
         class_id: kind === 'class' ? classId || null : null,
         member_ids: members,
+        teacher_ids: teacherIds,
       }
       if (group) await db.updateGroup(group.id, payload)
       else await db.createGroup({ school_id: school.schoolId, kind, ...payload })
@@ -243,7 +265,42 @@ function GroupModal({
 
         <div>
           <div className="mb-1.5 flex flex-wrap items-center gap-2">
-            <span className="text-[12.5px] text-ink-2">Состав</span>
+            <span className="text-[12.5px] text-ink-2">Учителя группы</span>
+            <span className="text-[12px] text-ink-3">выбрано: {teacherIds.length}</span>
+          </div>
+          {school.teachers.length === 0 ? (
+            <p className="text-[12.5px] text-ink-3">
+              Учителей в школе пока нет — добавьте их в разделе «Учителя».
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {school.teachers.map((t) => {
+                const on = teacherIds.includes(t.id)
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => toggleTeacher(t.id)}
+                    className={cx(
+                      'cf-pill px-2.5 py-[4px] text-[12px] font-semibold transition-colors',
+                      on ? 'border-brand/30 bg-brand-soft text-brand' : 'text-ink-3',
+                    )}
+                    title={t.user_id ? undefined : 'Аккаунт не заведён — в журнал курса не попадёт'}
+                  >
+                    {on && <Check size={12} className="mr-1 inline" />}
+                    {school.fullName(t)}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          <p className="mt-1.5 text-[12px] text-ink-3">
+            Учителей можно несколько. При назначении предмета они предлагаются как учителя курса.
+          </p>
+        </div>
+
+        <div>
+          <div className="mb-1.5 flex flex-wrap items-center gap-2">
+            <span className="text-[12.5px] text-ink-2">Ученики</span>
             <span className="text-[12px] text-ink-3">выбрано: {members.length}</span>
             <span className="relative ml-auto">
               <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3" />

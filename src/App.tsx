@@ -24,6 +24,7 @@ import { AdminSettingsPage } from '@/pages/admin/AdminSettingsPage'
 import {
   AdminClassesPage,
   AdminCoursesPage,
+  AdminDepartmentsPage,
   AdminGroupsPage,
   AdminStudentsPage,
   AdminSubjectsPage,
@@ -33,6 +34,7 @@ import { SchoolProvider } from '@/context/SchoolContext'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StarredPage } from '@/pages/StarredPage'
 import { TasksPage } from '@/pages/TasksPage'
+import { TeachingPage } from '@/pages/TeachingPage'
 import { useTheme } from '@/hooks/useTheme'
 
 export default function App() {
@@ -70,6 +72,7 @@ function Shell() {
         <Route path="classes" element={<AdminClassesPage />} />
         <Route path="students" element={<AdminStudentsPage />} />
         <Route path="teachers" element={<AdminTeachersPage />} />
+        <Route path="departments" element={<AdminDepartmentsPage />} />
         <Route path="subjects" element={<AdminSubjectsPage />} />
         <Route path="groups" element={<AdminGroupsPage />} />
         <Route path="courses" element={<AdminCoursesPage />} />
@@ -107,6 +110,8 @@ function Shell() {
         <Route path="gradebook" element={<GradebookPage />} />
         {/* единый дневник ученика: все предметы на одном экране */}
         <Route path="diary" element={<DiaryPage />} />
+        {/* учитель: все его группы, разложенные по предметам */}
+        <Route path="teaching" element={<TeachingPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="starred" element={<StarredPage />} />
@@ -133,16 +138,46 @@ function Workspace({ children }: { children: ReactNode }) {
 
 /** Закрытый маршрут: без сессии уводим на вход и запоминаем, куда шли. */
 function Protected({ children, to = '/auth' }: { children: ReactNode; to?: string }) {
-  const { user, loading } = useAuth()
+  const { user, loading, offline, retry } = useAuth()
   const location = useLocation()
 
   if (loading) return <Splash />
+  // сервер не ответил: на экран входа вести бессмысленно — войти всё равно
+  // не выйдет, а бесконечный сплэш выглядит как сломанное приложение
+  if (offline) return <Offline onRetry={retry} />
   if (!user) {
     const next = encodeURIComponent(location.pathname + location.search)
     // у админ-панели своя дверь, туда и уводим
     return <Navigate to={to === '/auth' ? `/auth?next=${next}` : to} replace />
   }
   return <>{children}</>
+}
+
+/** Бэкенд недоступен: честный экран вместо вечной загрузки. */
+function Offline({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="cf-collage flex h-screen flex-col items-center justify-center px-6 text-center">
+      <div className="animate-fade-up w-full max-w-md rounded-[26px] border border-line bg-surface p-7 shadow-pop">
+        <Logo size="md" />
+        <h1 className="mt-5 text-[19px] font-semibold tracking-[-0.01em]">
+          Не удаётся связаться с сервером
+        </h1>
+        <p className="mt-2 text-[13.5px] leading-relaxed text-ink-3">
+          Приложение загрузилось, но база данных не отвечает. Обычно это временно:
+          проверьте соединение и попробуйте ещё раз. Если не помогает — сервер проекта
+          сейчас недоступен, и остаётся подождать.
+        </p>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          <button className="cf-btn-brand px-5" onClick={onRetry}>
+            Повторить
+          </button>
+          <a href="/" className="cf-btn-ghost px-5">
+            На главную
+          </a>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function Splash() {

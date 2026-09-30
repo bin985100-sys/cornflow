@@ -30,13 +30,41 @@ export function SubjectsSection({ school }: { school: SchoolApi }) {
       {school.subjects.length === 0 ? (
         <EmptyState
           title="Предметов пока нет"
-          description="Предмет — это название, список классов и типы оценивания, которые на нём разрешены."
+          description="Предмет — это МО, название, список классов и типы оценивания, которые на нём разрешены."
         />
       ) : (
-        <div className="space-y-3">
-          {school.subjects.map((subject) => (
-            <SubjectCard key={subject.id} subject={subject} school={school} />
-          ))}
+        <div className="space-y-5">
+          {/* предметы разложены по МО: «Алгебра» и «Геометрия» под «Математикой» */}
+          {school.departments.map((dept) => {
+            const subjects = school.subjectsByDepartment(dept.id)
+            if (!subjects.length) return null
+            return (
+              <div key={dept.id} className="space-y-3">
+                <h2 className="flex items-center gap-2 px-1 text-[12.5px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ background: cardPalette[dept.color].accent }}
+                  />
+                  МО {dept.name}
+                </h2>
+                {subjects.map((subject) => (
+                  <SubjectCard key={subject.id} subject={subject} school={school} />
+                ))}
+              </div>
+            )
+          })}
+          {school.subjectsByDepartment(null).length > 0 && (
+            <div className="space-y-3">
+              {school.departments.length > 0 && (
+                <h2 className="px-1 text-[12.5px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+                  Без МО
+                </h2>
+              )}
+              {school.subjectsByDepartment(null).map((subject) => (
+                <SubjectCard key={subject.id} subject={subject} school={school} showDepartment />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -45,11 +73,21 @@ export function SubjectsSection({ school }: { school: SchoolApi }) {
   )
 }
 
-function SubjectCard({ subject, school }: { subject: SubjectView; school: SchoolApi }) {
+function SubjectCard({
+  subject,
+  school,
+  showDepartment = false,
+}: {
+  subject: SubjectView
+  school: SchoolApi
+  /** внутри блока МО заголовок уже назвал объединение — плашка не нужна */
+  showDepartment?: boolean
+}) {
   const toast = useToast()
   const [editing, setEditing] = useState(false)
   const [confirm, setConfirm] = useState(false)
   const palette = cardPalette[subject.color]
+  const department = school.departments.find((d) => d.id === subject.department_id)
 
   return (
     <div className="cf-card p-4">
@@ -60,6 +98,9 @@ function SubjectCard({ subject, school }: { subject: SubjectView; school: School
           <span className="cf-pill border-brand/25 bg-brand-soft px-2 py-[2px] text-[11px] text-brand">
             {subject.code}
           </span>
+        )}
+        {department && showDepartment && (
+          <span className="cf-pill px-2 py-[2px] text-[11px] text-ink-3">МО {department.name}</span>
         )}
         {school.isAdmin && (
           <div className="ml-auto flex items-center gap-1.5">
@@ -146,6 +187,7 @@ function SubjectModal({
   const [name, setName] = useState(subject?.name ?? '')
   const [code, setCode] = useState(subject?.code ?? '')
   const [color, setColor] = useState<CardColor>(subject?.color ?? 'blue')
+  const [departmentId, setDepartmentId] = useState(subject?.department_id ?? '')
   const [classIds, setClassIds] = useState<string[]>(subject?.class_ids ?? [])
   const [busy, setBusy] = useState(false)
 
@@ -164,13 +206,20 @@ function SubjectModal({
     setBusy(true)
     try {
       if (subject) {
-        await db.updateSubject(subject.id, { name, code: code || null, color, class_ids: classIds })
+        await db.updateSubject(subject.id, {
+          name,
+          code: code || null,
+          color,
+          department_id: departmentId || null,
+          class_ids: classIds,
+        })
       } else {
         await db.createSubject({
           school_id: school.schoolId,
           name,
           code: code || null,
           color,
+          department_id: departmentId || null,
           class_ids: classIds,
         })
       }
@@ -208,9 +257,31 @@ function SubjectModal({
           </div>
         </div>
 
-        <div>
-          <span className="mb-1.5 block text-[12.5px] text-ink-2">Цвет</span>
-          <ColorPicker value={color} onChange={setColor} />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <span className="mb-1 block text-[12.5px] text-ink-2">МО</span>
+            <select
+              className="cf-input w-full"
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+            >
+              <option value="">без МО</option>
+              {school.departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[12px] text-ink-3">
+              {school.departments.length
+                ? 'Методическое объединение, к которому относится предмет.'
+                : 'МО заводятся в разделе «МО».'}
+            </p>
+          </div>
+          <div>
+            <span className="mb-1.5 block text-[12.5px] text-ink-2">Цвет</span>
+            <ColorPicker value={color} onChange={setColor} />
+          </div>
         </div>
 
         <div>

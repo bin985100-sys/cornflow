@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   BookOpen,
+  Boxes,
   Building2,
   Check,
   Copy,
@@ -25,6 +26,7 @@ const NAV: Array<{ to: string; icon: LucideIcon; label: string; end?: boolean }>
   { to: '/admin/classes', icon: Layers, label: 'Классы' },
   { to: '/admin/students', icon: Users, label: 'Ученики' },
   { to: '/admin/teachers', icon: UserCog, label: 'Учителя' },
+  { to: '/admin/departments', icon: Boxes, label: 'МО' },
   { to: '/admin/subjects', icon: BookOpen, label: 'Предметы' },
   { to: '/admin/groups', icon: GraduationCap, label: 'Группы' },
   { to: '/admin/courses', icon: Building2, label: 'Курсы' },

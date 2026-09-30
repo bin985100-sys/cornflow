@@ -1,4 +1,5 @@
 import type {
+  CardColor,
   Assignment,
   AssignmentView,
   Attendance,
@@ -44,6 +45,7 @@ import type {
   GroupView,
   School,
   SchoolClass,
+  SchoolDepartment,
   SchoolGroup,
   SchoolParallel,
   SchoolPerson,
@@ -86,7 +88,7 @@ import { DEFAULT_TAGS, personalSpace } from './seed'
 const DB_KEY = 'cornflow.db.v2'
 const DB_BACKUP_KEY = 'cornflow.db.v2.backup'
 const SESSION_KEY = 'cornflow.session.v2'
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 interface MockDB {
   __version: number
@@ -123,12 +125,15 @@ interface MockDB {
   school_people: SchoolPerson[]
   school_parallels: SchoolParallel[]
   school_classes: SchoolClass[]
+  school_departments: SchoolDepartment[]
   school_subjects: SchoolSubject[]
   subject_classes: Array<{ subject_id: string; class_id: string }>
   subject_assessment_types: SubjectAssessmentType[]
   school_groups: SchoolGroup[]
   group_members: Array<{ group_id: string; person_id: string; added_at: string }>
+  group_teachers: Array<{ group_id: string; person_id: string; added_at: string }>
   teaching_assignments: TeachingAssignment[]
+  teaching_teachers: Array<{ assignment_id: string; teacher_id: string; added_at: string }>
 }
 
 function emptyDb(): MockDB {
@@ -167,12 +172,15 @@ function emptyDb(): MockDB {
     school_people: [],
     school_parallels: [],
     school_classes: [],
+    school_departments: [],
     school_subjects: [],
     subject_classes: [],
     subject_assessment_types: [],
     school_groups: [],
     group_members: [],
+    group_teachers: [],
     teaching_assignments: [],
+    teaching_teachers: [],
   }
 }
 
@@ -380,9 +388,15 @@ export class MockProvider implements DataProvider {
     this.db.subject_assessment_types = this.db.subject_assessment_types.filter(
       (t) => !subjectIds.includes(t.subject_id),
     )
+    this.db.school_departments = this.db.school_departments.filter((d) => d.school_id !== id)
     this.db.school_groups = this.db.school_groups.filter((g) => !groupIds.includes(g.id))
     this.db.group_members = this.db.group_members.filter((m) => !groupIds.includes(m.group_id))
+    this.db.group_teachers = this.db.group_teachers.filter((t) => !groupIds.includes(t.group_id))
+    const assignmentIds = this.db.teaching_assignments.filter((a) => a.school_id === id).map((a) => a.id)
     this.db.teaching_assignments = this.db.teaching_assignments.filter((a) => a.school_id !== id)
+    this.db.teaching_teachers = this.db.teaching_teachers.filter(
+      (t) => !assignmentIds.includes(t.assignment_id),
+    )
     this.persist({ table: 'school' })
   }
 
@@ -401,6 +415,9 @@ export class MockProvider implements DataProvider {
       people: this.db.school_people
         .filter((p) => p.school_id === schoolId)
         .sort((a, b) => a.last_name.localeCompare(b.last_name, 'ru')),
+      departments: this.db.school_departments
+        .filter((d) => d.school_id === schoolId)
+        .sort((a, b) => a.position - b.position),
       subjects: this.db.school_subjects
         .filter((x) => x.school_id === schoolId)
         .map((sub) => ({
@@ -415,8 +432,17 @@ export class MockProvider implements DataProvider {
         .map((g) => ({
           ...g,
           member_ids: this.db.group_members.filter((m) => m.group_id === g.id).map((m) => m.person_id),
+          teacher_ids: this.db.group_teachers.filter((t) => t.group_id === g.id).map((t) => t.person_id),
         })),
-      assignments: this.db.teaching_assignments.filter((a) => a.school_id === schoolId),
+      assignments: this.db.teaching_assignments
+        .filter((a) => a.school_id === schoolId)
+        .map((a) => {
+          const ids = this.db.teaching_teachers
+            .filter((t) => t.assignment_id === a.id)
+            .map((t) => t.teacher_id)
+          // курсы, созданные до появления списка учителей, знают только teacher_id
+          return { ...a, teacher_ids: ids.length || !a.teacher_id ? ids : [a.teacher_id] }
+        }),
     }
   }
 
@@ -618,6 +644,47 @@ export class MockProvider implements DataProvider {
     return results
   }
 
+  /* ------------------------------- МО ----------------------------------- */
+
+  async createDepartment(schoolId: string, name: string, color?: CardColor): Promise<SchoolDepartment> {
+    this.assertSchoolAdmin(schoolId)
+    const row: SchoolDepartment = {
+      id: uid('dept'),
+      school_id: schoolId,
+      name: name.trim(),
+      color: color ?? colorFromString(name),
+      position: this.db.school_departments.filter((d) => d.school_id === schoolId).length,
+      created_at: nowIso(),
+    }
+    this.db.school_departments.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updateDepartment(
+    id: string,
+    patch: Partial<Pick<SchoolDepartment, 'name' | 'color' | 'position'>>,
+  ): Promise<SchoolDepartment> {
+    const row = this.db.school_departments.find((d) => d.id === id)
+    if (!row) throw new Error('МО не найдено')
+    this.assertSchoolAdmin(row.school_id)
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteDepartment(id: string): Promise<void> {
+    const row = this.db.school_departments.find((d) => d.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.school_departments = this.db.school_departments.filter((d) => d.id !== id)
+    // предметы остаются, у них просто пропадает привязка
+    this.db.school_subjects.forEach((sub) => {
+      if (sub.department_id === id) sub.department_id = null
+    })
+    this.persist({ table: 'school' })
+  }
+
   private mockSubjectView(id: string): SubjectView {
     const subject = this.db.school_subjects.find((x) => x.id === id)
     if (!subject) throw new Error('Предмет не найден')
@@ -638,6 +705,7 @@ export class MockProvider implements DataProvider {
       name: input.name.trim(),
       code: input.code ?? null,
       color: input.color ?? colorFromString(input.name),
+      department_id: input.department_id ?? null,
       position: this.db.school_subjects.filter((x) => x.school_id === input.school_id).length,
       created_at: nowIso(),
     }
@@ -651,7 +719,9 @@ export class MockProvider implements DataProvider {
 
   async updateSubject(
     id: string,
-    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position'>> & { class_ids?: string[] },
+    patch: Partial<Pick<SchoolSubject, 'name' | 'code' | 'color' | 'position' | 'department_id'>> & {
+      class_ids?: string[]
+    },
   ): Promise<SubjectView> {
     const subject = this.db.school_subjects.find((x) => x.id === id)
     if (!subject) throw new Error('Предмет не найден')
@@ -712,6 +782,7 @@ export class MockProvider implements DataProvider {
     return {
       ...group,
       member_ids: this.db.group_members.filter((m) => m.group_id === id).map((m) => m.person_id),
+      teacher_ids: this.db.group_teachers.filter((t) => t.group_id === id).map((t) => t.person_id),
     }
   }
 
@@ -730,23 +801,35 @@ export class MockProvider implements DataProvider {
     for (const personId of input.member_ids ?? []) {
       this.db.group_members.push({ group_id: group.id, person_id: personId, added_at: nowIso() })
     }
+    for (const personId of input.teacher_ids ?? []) {
+      this.db.group_teachers.push({ group_id: group.id, person_id: personId, added_at: nowIso() })
+    }
     this.persist({ table: 'school' })
     return this.mockGroupView(group.id)
   }
 
   async updateGroup(
     id: string,
-    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & { member_ids?: string[] },
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & {
+      member_ids?: string[]
+      teacher_ids?: string[]
+    },
   ): Promise<GroupView> {
     const group = this.db.school_groups.find((g) => g.id === id)
     if (!group) throw new Error('Группа не найдена')
     this.assertSchoolAdmin(group.school_id)
-    const { member_ids, ...rest } = patch
+    const { member_ids, teacher_ids, ...rest } = patch
     Object.assign(group, rest)
     if (member_ids) {
       this.db.group_members = this.db.group_members.filter((m) => m.group_id !== id)
       for (const personId of member_ids) {
         this.db.group_members.push({ group_id: id, person_id: personId, added_at: nowIso() })
+      }
+    }
+    if (teacher_ids) {
+      this.db.group_teachers = this.db.group_teachers.filter((t) => t.group_id !== id)
+      for (const personId of teacher_ids) {
+        this.db.group_teachers.push({ group_id: id, person_id: personId, added_at: nowIso() })
       }
     }
     this.persist({ table: 'school' })
@@ -759,7 +842,10 @@ export class MockProvider implements DataProvider {
     this.assertSchoolAdmin(group.school_id)
     this.db.school_groups = this.db.school_groups.filter((g) => g.id !== id)
     this.db.group_members = this.db.group_members.filter((m) => m.group_id !== id)
+    this.db.group_teachers = this.db.group_teachers.filter((t) => t.group_id !== id)
+    const gone = this.db.teaching_assignments.filter((a) => a.group_id === id).map((a) => a.id)
     this.db.teaching_assignments = this.db.teaching_assignments.filter((a) => a.group_id !== id)
+    this.db.teaching_teachers = this.db.teaching_teachers.filter((t) => !gone.includes(t.assignment_id))
     this.persist({ table: 'school' })
   }
 
@@ -767,17 +853,18 @@ export class MockProvider implements DataProvider {
     school_id: string
     subject_id: string
     group_id: string
-    teacher_id: string | null
+    teacher_ids: string[]
   }): Promise<TeachingAssignment> {
     this.assertSchoolAdmin(input.school_id)
     const me = this.me()
     const subject = this.mockSubjectView(input.subject_id)
     const group = this.mockGroupView(input.group_id)
+    const teacherIds = [...new Set(input.teacher_ids.filter(Boolean))]
 
     const space: Space = {
       id: uid('space'),
       name: `${subject.name} · ${group.name}`,
-      description: 'Курс собран из школы: предмет, группа и учитель',
+      description: 'Курс собран из школы: предмет, группа и учителя',
       owner_id: me.id,
       color: subject.color,
       invite_code: inviteCode(),
@@ -790,32 +877,28 @@ export class MockProvider implements DataProvider {
       show_members: true,
     }
     this.db.spaces.push(space)
-    this.db.space_members.push({
+
+    const row: TeachingAssignment = {
+      id: uid('teaching'),
+      school_id: input.school_id,
+      subject_id: input.subject_id,
+      group_id: input.group_id,
+      // teacher_id оставлен для совместимости: первый из списка
+      teacher_id: teacherIds[0] ?? null,
       space_id: space.id,
-      user_id: me.id,
-      permission: 'edit',
-      joined_at: nowIso(),
-    })
-    const teacher = this.db.school_people.find((p) => p.id === input.teacher_id)
-    if (teacher?.user_id && teacher.user_id !== me.id) {
-      this.db.space_members.push({
-        space_id: space.id,
-        user_id: teacher.user_id,
-        permission: 'edit',
-        joined_at: nowIso(),
-      })
+      created_at: nowIso(),
+      teacher_ids: teacherIds,
     }
-    for (const personId of group.member_ids) {
-      const person = this.db.school_people.find((p) => p.id === personId)
-      if (person?.user_id && !this.db.space_members.some((m) => m.space_id === space.id && m.user_id === person.user_id)) {
-        this.db.space_members.push({
-          space_id: space.id,
-          user_id: person.user_id,
-          permission: 'view',
-          joined_at: nowIso(),
-        })
+    this.db.teaching_assignments.push(row)
+    for (const teacherId of teacherIds) {
+      this.db.teaching_teachers.push({ assignment_id: row.id, teacher_id: teacherId, added_at: nowIso() })
+      // учитель курса — он же учитель группы
+      if (!this.db.group_teachers.some((t) => t.group_id === input.group_id && t.person_id === teacherId)) {
+        this.db.group_teachers.push({ group_id: input.group_id, person_id: teacherId, added_at: nowIso() })
       }
     }
+
+    this.syncTeachingMembers(space.id, input.school_id, teacherIds, group.member_ids, me.id)
 
     // журнал курса: шкала, периоды и типы работ — как в серверном режиме
     await this.ensureGradebook(space.id)
@@ -837,19 +920,80 @@ export class MockProvider implements DataProvider {
       )
     }
 
-    const row: TeachingAssignment = {
-      id: uid('teaching'),
-      school_id: input.school_id,
-      subject_id: input.subject_id,
-      group_id: input.group_id,
-      teacher_id: input.teacher_id,
-      space_id: space.id,
-      created_at: nowIso(),
-    }
-    this.db.teaching_assignments.push(row)
     this.persist({ table: 'school' })
     this.persist({ table: 'spaces' })
-    return row
+    return { ...row }
+  }
+
+  async updateTeaching(id: string, patch: { teacher_ids: string[] }): Promise<TeachingAssignment> {
+    const row = this.db.teaching_assignments.find((a) => a.id === id)
+    if (!row) throw new Error('Курс не найден')
+    this.assertSchoolAdmin(row.school_id)
+    const me = this.me()
+    const teacherIds = [...new Set(patch.teacher_ids.filter(Boolean))]
+
+    this.db.teaching_teachers = this.db.teaching_teachers.filter((t) => t.assignment_id !== id)
+    for (const teacherId of teacherIds) {
+      this.db.teaching_teachers.push({ assignment_id: id, teacher_id: teacherId, added_at: nowIso() })
+      if (!this.db.group_teachers.some((t) => t.group_id === row.group_id && t.person_id === teacherId)) {
+        this.db.group_teachers.push({ group_id: row.group_id, person_id: teacherId, added_at: nowIso() })
+      }
+    }
+    row.teacher_id = teacherIds[0] ?? null
+    row.teacher_ids = teacherIds
+
+    if (row.space_id) {
+      const group = this.mockGroupView(row.group_id)
+      this.syncTeachingMembers(row.space_id, row.school_id, teacherIds, group.member_ids, me.id)
+    }
+
+    this.persist({ table: 'school' })
+    this.persist({ table: 'spaces' })
+    return { ...row }
+  }
+
+  /**
+   * Участники журнала курса: администратор и учителя правят, ученики группы
+   * читают. Снятые с курса учителя доступ теряют.
+   */
+  private syncTeachingMembers(
+    spaceId: string,
+    schoolId: string,
+    teacherIds: string[],
+    studentIds: string[],
+    ownerUserId: string,
+  ): void {
+    const people = this.db.school_people.filter((p) => p.school_id === schoolId)
+    const userOf = (personId: string) => people.find((p) => p.id === personId)?.user_id ?? null
+    const put = (userId: string | null, permission: Permission) => {
+      if (!userId) return
+      const existing = this.db.space_members.find((m) => m.space_id === spaceId && m.user_id === userId)
+      if (existing) existing.permission = permission
+      else this.db.space_members.push({ space_id: spaceId, user_id: userId, permission, joined_at: nowIso() })
+    }
+    put(ownerUserId, 'edit')
+    teacherIds.forEach((id) => put(userOf(id), 'edit'))
+    studentIds.forEach((id) => {
+      const userId = userOf(id)
+      // ученику не понижаем права, если он уже редактор этого пространства
+      if (userId && !this.db.space_members.some((m) => m.space_id === spaceId && m.user_id === userId)) {
+        put(userId, 'view')
+      }
+    })
+
+    const keep = new Set<string>([ownerUserId, ...teacherIds.map(userOf).filter(Boolean) as string[]])
+    studentIds.forEach((id) => {
+      const userId = userOf(id)
+      if (userId) keep.add(userId)
+    })
+    const dropped = people
+      .filter((p) => (p.role === 'teacher' || p.role === 'admin') && p.user_id && !keep.has(p.user_id))
+      .map((p) => p.user_id as string)
+    if (dropped.length) {
+      this.db.space_members = this.db.space_members.filter(
+        (m) => m.space_id !== spaceId || !dropped.includes(m.user_id),
+      )
+    }
   }
 
   async deleteTeaching(id: string): Promise<void> {
@@ -857,6 +1001,7 @@ export class MockProvider implements DataProvider {
     if (!row) return
     this.assertSchoolAdmin(row.school_id)
     this.db.teaching_assignments = this.db.teaching_assignments.filter((a) => a.id !== id)
+    this.db.teaching_teachers = this.db.teaching_teachers.filter((t) => t.assignment_id !== id)
     this.persist({ table: 'school' })
   }
 

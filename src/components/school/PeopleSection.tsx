@@ -347,8 +347,10 @@ function BulkModal({
         // «Фамилия Имя Отчество» или «Фамилия Имя, 9А» — класс после запятой
         const [namePart, classPart] = line.split(',').map((s) => s.trim())
         const [last = '', first = '', middle = ''] = namePart.split(/\s+/)
+        // «10Физмат», «10 Физмат» и «10  физмат» — один и тот же класс
+        const norm = (v: string) => v.toLowerCase().replace(/\s+/g, '')
         const named = classPart
-          ? school.classes.find((c) => school.classLabel(c.id).toLowerCase() === classPart.toLowerCase())
+          ? school.classes.find((c) => norm(school.classLabel(c.id)) === norm(classPart))
           : undefined
         return {
           school_id: school.schoolId!,
