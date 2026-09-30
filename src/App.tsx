@@ -30,6 +30,16 @@ import {
   AdminSubjectsPage,
   AdminTeachersPage,
 } from '@/pages/admin/sections'
+import { PlatformGate } from '@/components/platform/PlatformGate'
+import { PlatformProvider } from '@/context/PlatformContext'
+import {
+  PlatformAuditPage,
+  PlatformOverviewPage,
+  PlatformPeoplePage,
+  PlatformSchoolsPage,
+  PlatformSpacesPage,
+} from '@/pages/platform/sections'
+import { PlatformIncidentsPage, PlatformSearchPage } from '@/pages/platform/moderation'
 import { SchoolProvider } from '@/context/SchoolContext'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { StarredPage } from '@/pages/StarredPage'
@@ -78,6 +88,27 @@ function Shell() {
         <Route path="courses" element={<AdminCoursesPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
+      </Route>
+
+      {/* ---------------------- панель платформы (владелец) --------------- */}
+      <Route
+        path="/platform"
+        element={
+          <Protected>
+            <PlatformProvider>
+              <PlatformGate />
+            </PlatformProvider>
+          </Protected>
+        }
+      >
+        <Route index element={<PlatformOverviewPage />} />
+        <Route path="schools" element={<PlatformSchoolsPage />} />
+        <Route path="spaces" element={<PlatformSpacesPage />} />
+        <Route path="people" element={<PlatformPeoplePage />} />
+        <Route path="search" element={<PlatformSearchPage />} />
+        <Route path="incidents" element={<PlatformIncidentsPage />} />
+        <Route path="audit" element={<PlatformAuditPage />} />
+        <Route path="*" element={<Navigate to="/platform" replace />} />
       </Route>
 
       {/* ------------------------- приглашение по ссылке ------------------ */}

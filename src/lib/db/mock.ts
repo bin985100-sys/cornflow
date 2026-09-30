@@ -44,6 +44,13 @@ import type {
   AccountResult,
   GroupView,
   School,
+  PlatformAuditEntry,
+  PlatformFinding,
+  PlatformIncident,
+  PlatformOverview,
+  PlatformPerson,
+  PlatformSchool,
+  PlatformSpace,
   SchoolClass,
   SchoolDepartment,
   SchoolGroup,
@@ -122,6 +129,9 @@ interface MockDB {
   bundle_spaces: Array<{ bundle_id: string; space_id: string; added_by: string | null; added_at: string }>
   attendance: Attendance[]
   schools: School[]
+  platform_admins: string[]
+  platform_audit: PlatformAuditEntry[]
+  platform_incidents: PlatformIncident[]
   school_people: SchoolPerson[]
   school_parallels: SchoolParallel[]
   school_classes: SchoolClass[]
@@ -169,6 +179,11 @@ function emptyDb(): MockDB {
     bundle_spaces: [],
     attendance: [],
     schools: [],
+    // в локальном режиме главный админ — первый заведённый аккаунт: одному
+    // человеку в своём браузере проверять больше некому
+    platform_admins: [],
+    platform_audit: [],
+    platform_incidents: [],
     school_people: [],
     school_parallels: [],
     school_classes: [],
@@ -1005,6 +1020,335 @@ export class MockProvider implements DataProvider {
     this.persist({ table: 'school' })
   }
 
+
+  /* ============================ платформа ================================ */
+
+  /** В локальном режиме главный админ — первый зарегистрированный аккаунт */
+  private platformAdminId(): string | null {
+    return this.db.platform_admins[0] ?? this.db.users[0]?.id ?? null
+  }
+
+  async isPlatformAdmin(): Promise<boolean> {
+    const me = this.db.users.find((u) => u.id === localStorage.getItem(SESSION_KEY))
+    return Boolean(me && me.id === this.platformAdminId())
+  }
+
+  async platformOverview(): Promise<PlatformOverview> {
+    const people = this.db.school_people
+    const weekAgo = Date.now() - 7 * 24 * 3600 * 1000
+    return {
+      users: this.db.users.length,
+      schools: this.db.schools.length,
+      blocked: this.db.schools.filter((s) => (s as School & { is_blocked?: boolean }).is_blocked).length,
+      spaces: this.db.spaces.length,
+      people: people.length,
+      students: people.filter((p) => p.role === 'student').length,
+      teachers: people.filter((p) => p.role === 'teacher').length,
+      no_account: people.filter((p) => !p.user_id).length,
+      materials: this.db.materials.length,
+      assignments: this.db.assignments.length,
+      grades: this.db.grades.length,
+      courses: this.db.teaching_assignments.length,
+      new_users_7d: this.db.users.filter((u) => new Date(u.created_at).getTime() > weekAgo).length,
+    }
+  }
+
+  async platformSchools(): Promise<PlatformSchool[]> {
+    return this.db.schools.map((s) => {
+      const mine = this.db.school_people.filter((p) => p.school_id === s.id)
+      const owner = this.db.users.find((u) => u.id === s.owner_id)
+      const extra = s as School & { is_blocked?: boolean; blocked_reason?: string | null }
+      return {
+        id: s.id,
+        name: s.name,
+        code: s.code,
+        owner_id: s.owner_id,
+        owner_name: owner?.name ?? null,
+        owner_email: owner?.email ?? null,
+        is_blocked: Boolean(extra.is_blocked),
+        blocked_reason: extra.blocked_reason ?? null,
+        created_at: s.created_at,
+        people: mine.length,
+        students: mine.filter((p) => p.role === 'student').length,
+        teachers: mine.filter((p) => p.role === 'teacher').length,
+        spaces: this.db.spaces.filter((x) => (x as Space & { school_id?: string }).school_id === s.id).length,
+      }
+    })
+  }
+
+  async platformSpaces(): Promise<PlatformSpace[]> {
+    return this.db.spaces.map((sp) => {
+      const extra = sp as Space & { school_id?: string | null }
+      return {
+        id: sp.id,
+        name: sp.name,
+        color: sp.color,
+        owner_id: sp.owner_id,
+        owner_name: this.db.users.find((u) => u.id === sp.owner_id)?.name ?? null,
+        school_id: extra.school_id ?? null,
+        school_name: this.db.schools.find((s) => s.id === extra.school_id)?.name ?? null,
+        members: this.db.space_members.filter((m) => m.space_id === sp.id).length,
+        materials: this.db.materials.filter((m) => m.space_id === sp.id).length,
+        created_at: sp.created_at,
+      }
+    })
+  }
+
+  async platformPeople(query: string): Promise<PlatformPerson[]> {
+    const q = query.trim().toLowerCase()
+    return this.db.school_people
+      .filter((p) => {
+        if (!q) return true
+        const name = [p.last_name, p.first_name, p.middle_name].filter(Boolean).join(' ').toLowerCase()
+        return name.includes(q) || (p.login ?? '').toLowerCase().includes(q)
+      })
+      .slice(0, 300)
+      .map((p) => {
+        const klass = this.db.school_classes.find((c) => c.id === p.class_id)
+        const parallel = klass ? this.db.school_parallels.find((x) => x.id === klass.parallel_id) : undefined
+        const prefix = parallel?.name ?? ''
+        const glue = /^\d+$/.test(prefix) && (klass?.name.length ?? 0) <= 2 ? '' : ' '
+        return {
+          id: p.id,
+          school_id: p.school_id,
+          school_name: this.db.schools.find((s) => s.id === p.school_id)?.name ?? null,
+          role: p.role,
+          full_name:
+            [p.last_name, p.first_name, p.middle_name].filter(Boolean).join(' ').trim() ||
+            p.login ||
+            'Без имени',
+          login: p.login,
+          user_id: p.user_id,
+          email: this.db.users.find((u) => u.id === p.user_id)?.email ?? null,
+          is_active: p.is_active,
+          class_label: klass ? `${prefix}${glue}${klass.name}`.trim() : null,
+        }
+      })
+  }
+
+  async platformAudit(limit = 200): Promise<PlatformAuditEntry[]> {
+    return [...this.db.platform_audit]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit)
+      .map((row) => ({
+        ...row,
+        actor_name: this.db.users.find((u) => u.id === row.actor_id)?.name ?? null,
+      }))
+  }
+
+  async platformLog(entry: {
+    action: string
+    target_type?: string | null
+    target_id?: string | null
+    target_label?: string | null
+    meta?: Record<string, unknown>
+  }): Promise<void> {
+    const me = this.me()
+    this.db.platform_audit.push({
+      id: uid('audit'),
+      actor_id: me.id,
+      actor_name: me.name,
+      action: entry.action,
+      target_type: entry.target_type ?? null,
+      target_id: entry.target_id ?? null,
+      target_label: entry.target_label ?? null,
+      meta: entry.meta ?? {},
+      created_at: nowIso(),
+    })
+    this.persist({ table: 'school' })
+  }
+
+  async platformBlockSchool(schoolId: string, blocked: boolean, reason?: string | null): Promise<void> {
+    const school = this.db.schools.find((s) => s.id === schoolId) as
+      | (School & { is_blocked?: boolean; blocked_reason?: string | null })
+      | undefined
+    if (!school) throw new Error('Школа не найдена')
+    school.is_blocked = blocked
+    school.blocked_reason = blocked ? (reason ?? null) : null
+    await this.platformLog({
+      action: blocked ? 'school.block' : 'school.unblock',
+      target_type: 'school',
+      target_id: schoolId,
+      target_label: school.name,
+      meta: reason ? { reason } : {},
+    })
+    this.persist({ table: 'school' })
+  }
+
+  async platformResetPassword(personId: string, password: string): Promise<void> {
+    const person = this.db.school_people.find((p) => p.id === personId)
+    if (!person) throw new Error('Человек не найден')
+    const results = await this.setAccountPassword(person.school_id, [{ person_id: personId, password }])
+    const bad = results.find((r) => !r.ok)
+    if (bad) throw new Error(bad.error ?? 'Не удалось сменить пароль')
+    await this.platformLog({
+      action: 'person.reset_password',
+      target_type: 'school_person',
+      target_id: personId,
+      target_label: `${person.last_name} ${person.first_name}`.trim() || person.login || personId,
+      meta: { school_id: person.school_id },
+    })
+  }
+
+
+  async platformSearch(query: string): Promise<PlatformFinding[]> {
+    const q = query.trim().toLowerCase()
+    if (q.length < 2) return []
+    const spaceName = (id: string) => this.db.spaces.find((s) => s.id === id)?.name ?? null
+    const schoolName = (id: string) => {
+      const sp = this.db.spaces.find((s) => s.id === id) as (Space & { school_id?: string }) | undefined
+      return this.db.schools.find((x) => x.id === sp?.school_id)?.name ?? null
+    }
+    const userName = (id: string | null) =>
+      id ? (this.db.users.find((u) => u.id === id)?.name ?? null) : null
+    const hit = (...parts: Array<string | null | undefined>) =>
+      parts.some((p) => (p ?? '').toLowerCase().includes(q))
+
+    const out: PlatformFinding[] = []
+    for (const m of this.db.materials) {
+      const extra = m as Material & { is_hidden?: boolean }
+      if (!hit(m.title, m.description, m.content, m.file_name)) continue
+      out.push({
+        kind: 'material',
+        id: m.id,
+        space_id: m.space_id,
+        space_name: spaceName(m.space_id),
+        school_name: schoolName(m.space_id),
+        author_id: m.author_id,
+        author_name: userName(m.author_id),
+        title: m.title,
+        excerpt: `${m.description ?? ''} ${m.content ?? ''}`.trim().slice(0, 300),
+        is_hidden: Boolean(extra.is_hidden),
+        created_at: m.created_at,
+      })
+    }
+    for (const c of this.db.comments) {
+      const extra = c as Comment & { is_hidden?: boolean }
+      if (!hit(c.body)) continue
+      out.push({
+        kind: 'comment',
+        id: c.id,
+        space_id: c.space_id,
+        space_name: spaceName(c.space_id),
+        school_name: schoolName(c.space_id),
+        author_id: c.author_id,
+        author_name: userName(c.author_id),
+        title: c.body.slice(0, 80),
+        excerpt: c.body.slice(0, 300),
+        is_hidden: Boolean(extra.is_hidden),
+        created_at: c.created_at,
+      })
+    }
+    for (const a of this.db.assignments) {
+      if (!hit(a.title, a.description)) continue
+      out.push({
+        kind: 'assignment',
+        id: a.id,
+        space_id: a.space_id,
+        space_name: spaceName(a.space_id),
+        school_name: schoolName(a.space_id),
+        author_id: null,
+        author_name: null,
+        title: a.title,
+        excerpt: (a.description ?? '').slice(0, 300),
+        is_hidden: false,
+        created_at: a.created_at,
+      })
+    }
+    return out.sort((x, y) => y.created_at.localeCompare(x.created_at)).slice(0, 200)
+  }
+
+  async platformHide(
+    kind: 'material' | 'comment',
+    id: string,
+    hidden: boolean,
+    reason?: string | null,
+    label?: string | null,
+  ): Promise<void> {
+    const row =
+      kind === 'material'
+        ? (this.db.materials.find((m) => m.id === id) as (Material & Record<string, unknown>) | undefined)
+        : (this.db.comments.find((c) => c.id === id) as (Comment & Record<string, unknown>) | undefined)
+    if (!row) throw new Error('Не найдено')
+    row.is_hidden = hidden
+    row.hidden_reason = hidden ? (reason ?? null) : null
+    row.hidden_at = hidden ? nowIso() : null
+    await this.platformLog({
+      action: hidden ? `${kind}.hide` : `${kind}.unhide`,
+      target_type: kind,
+      target_id: id,
+      target_label: label ?? null,
+      meta: reason ? { reason } : {},
+    })
+    this.persist({ table: kind === 'material' ? 'materials' : 'comments' })
+  }
+
+  async platformOpenIncident(input: {
+    title: string
+    note?: string | null
+    finding: PlatformFinding
+  }): Promise<PlatformIncident> {
+    const me = this.me()
+    const f = input.finding
+    const row: PlatformIncident = {
+      id: uid('incident'),
+      opened_by: me.id,
+      opened_by_name: me.name,
+      kind: 'content',
+      status: 'open',
+      title: input.title,
+      note: input.note ?? null,
+      snapshot: {
+        kind: f.kind,
+        title: f.title,
+        excerpt: f.excerpt,
+        author_name: f.author_name,
+        space_name: f.space_name,
+        school_name: f.school_name,
+        created_at: f.created_at,
+        captured_at: nowIso(),
+      },
+      source_type: f.kind,
+      source_id: f.id,
+      space_id: f.space_id,
+      school_id: null,
+      author_id: f.author_id,
+      created_at: nowIso(),
+      closed_at: null,
+    }
+    this.db.platform_incidents.push(row)
+    await this.platformLog({
+      action: 'incident.open',
+      target_type: f.kind,
+      target_id: f.id,
+      target_label: input.title,
+    })
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async platformIncidents(): Promise<PlatformIncident[]> {
+    return [...this.db.platform_incidents]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((r) => ({
+        ...r,
+        opened_by_name: this.db.users.find((u) => u.id === r.opened_by)?.name ?? null,
+      }))
+  }
+
+  async platformCloseIncident(id: string, closed: boolean): Promise<void> {
+    const row = this.db.platform_incidents.find((r) => r.id === id)
+    if (!row) return
+    row.status = closed ? 'closed' : 'open'
+    row.closed_at = closed ? nowIso() : null
+    await this.platformLog({
+      action: closed ? 'incident.close' : 'incident.reopen',
+      target_type: 'incident',
+      target_id: id,
+    })
+    this.persist({ table: 'school' })
+  }
+
   async signInToSchool(input: SchoolSignInInput): Promise<User> {
     const code = input.code.trim().toUpperCase()
     const login = input.login.trim().toLowerCase()
@@ -1307,6 +1651,8 @@ export class MockProvider implements DataProvider {
 
   async listComments(target: { materialId?: string; assignmentId?: string }): Promise<CommentView[]> {
     const rows = this.db.comments
+      // скрытое модерацией не показываем участникам
+      .filter((c) => !(c as Comment & { is_hidden?: boolean }).is_hidden)
       .filter((c) =>
         target.materialId ? c.material_id === target.materialId : c.assignment_id === target.assignmentId,
       )
@@ -1608,7 +1954,7 @@ export class MockProvider implements DataProvider {
     const me = this.sessionUserId()
     if (!me) return []
     const list = this.db.materials
-      .filter((m) => m.space_id === spaceId)
+      .filter((m) => m.space_id === spaceId && !(m as Material & { is_hidden?: boolean }).is_hidden)
       .map((m) => this.toMaterialView(m, me))
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
     return delay(list)

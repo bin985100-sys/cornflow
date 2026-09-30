@@ -41,6 +41,13 @@ import type {
   AccountResult,
   GroupView,
   School,
+  PlatformAuditEntry,
+  PlatformFinding,
+  PlatformIncident,
+  PlatformOverview,
+  PlatformPerson,
+  PlatformSchool,
+  PlatformSpace,
   SchoolClass,
   SchoolDepartment,
   SchoolGroup,
@@ -2357,6 +2364,297 @@ export class SupabaseProvider implements DataProvider {
     const user = await this.getCurrentUser()
     if (!user) throw new Error('Профиль не найден')
     return user
+  }
+
+
+  /* ============================ платформа ================================ */
+
+  async isPlatformAdmin(): Promise<boolean> {
+    const { data, error } = await supabase().rpc('is_platform_admin')
+    if (error) return false
+    return data === true
+  }
+
+  async platformOverview(): Promise<PlatformOverview> {
+    const { data, error } = await supabase().rpc('platform_overview')
+    if (error) throw new Error(humanError(error))
+    if (!data) throw new Error('Нет прав главного администратора')
+    return data as unknown as PlatformOverview
+  }
+
+  async platformSchools(): Promise<PlatformSchool[]> {
+    const [schools, people, spaces, users] = await Promise.all([
+      supabase().from('schools').select('*').order('created_at', { ascending: false }),
+      supabase().from('school_people').select('school_id, role'),
+      supabase().from('spaces').select('id, school_id'),
+      supabase().from('users').select('id, name, email'),
+    ])
+    if (schools.error) throw new Error(humanError(schools.error))
+    const peopleRows = (people.data ?? []) as Array<{ school_id: string; role: SchoolRole }>
+    const spaceRows = (spaces.data ?? []) as Array<{ id: string; school_id: string | null }>
+    const userRows = (users.data ?? []) as Array<{ id: string; name: string | null; email: string | null }>
+
+    return ((schools.data ?? []) as unknown as Array<School & { is_blocked?: boolean; blocked_reason?: string | null }>)
+      .map((s) => {
+        const mine = peopleRows.filter((p) => p.school_id === s.id)
+        const owner = userRows.find((u) => u.id === s.owner_id)
+        return {
+          id: s.id,
+          name: s.name,
+          code: s.code,
+          owner_id: s.owner_id,
+          owner_name: owner?.name ?? null,
+          owner_email: owner?.email ?? null,
+          is_blocked: Boolean(s.is_blocked),
+          blocked_reason: s.blocked_reason ?? null,
+          created_at: s.created_at,
+          people: mine.length,
+          students: mine.filter((p) => p.role === 'student').length,
+          teachers: mine.filter((p) => p.role === 'teacher').length,
+          spaces: spaceRows.filter((x) => x.school_id === s.id).length,
+        }
+      })
+  }
+
+  async platformSpaces(): Promise<PlatformSpace[]> {
+    const [spaces, members, materials, users, schools] = await Promise.all([
+      supabase().from('spaces').select('*').order('created_at', { ascending: false }).limit(500),
+      supabase().from('space_members').select('space_id'),
+      supabase().from('materials').select('space_id'),
+      supabase().from('users').select('id, name'),
+      supabase().from('schools').select('id, name'),
+    ])
+    if (spaces.error) throw new Error(humanError(spaces.error))
+    const memberRows = (members.data ?? []) as Array<{ space_id: string }>
+    const materialRows = (materials.data ?? []) as Array<{ space_id: string }>
+    const userRows = (users.data ?? []) as Array<{ id: string; name: string | null }>
+    const schoolRows = (schools.data ?? []) as Array<{ id: string; name: string }>
+
+    return ((spaces.data ?? []) as unknown as Array<Space & { school_id?: string | null }>).map((sp) => ({
+      id: sp.id,
+      name: sp.name,
+      color: sp.color,
+      owner_id: sp.owner_id,
+      owner_name: userRows.find((u) => u.id === sp.owner_id)?.name ?? null,
+      school_id: sp.school_id ?? null,
+      school_name: schoolRows.find((s) => s.id === sp.school_id)?.name ?? null,
+      members: memberRows.filter((m) => m.space_id === sp.id).length,
+      materials: materialRows.filter((m) => m.space_id === sp.id).length,
+      created_at: sp.created_at,
+    }))
+  }
+
+  async platformPeople(query: string): Promise<PlatformPerson[]> {
+    const q = query.trim()
+    let request = supabase().from('school_people').select('*').order('last_name').limit(300)
+    if (q) {
+      const like = `%${q}%`
+      request = request.or(
+        `last_name.ilike.${like},first_name.ilike.${like},middle_name.ilike.${like},login.ilike.${like}`,
+      )
+    }
+    const [people, schools, classes, parallels, users] = await Promise.all([
+      request,
+      supabase().from('schools').select('id, name'),
+      supabase().from('school_classes').select('id, name, parallel_id'),
+      supabase().from('school_parallels').select('id, name'),
+      supabase().from('users').select('id, email'),
+    ])
+    if (people.error) throw new Error(humanError(people.error))
+    const schoolRows = (schools.data ?? []) as Array<{ id: string; name: string }>
+    const classRows = (classes.data ?? []) as Array<{ id: string; name: string; parallel_id: string }>
+    const parallelRows = (parallels.data ?? []) as Array<{ id: string; name: string }>
+    const userRows = (users.data ?? []) as Array<{ id: string; email: string | null }>
+
+    return ((people.data ?? []) as unknown as SchoolPerson[]).map((p) => {
+      const klass = classRows.find((c) => c.id === p.class_id)
+      const parallel = klass ? parallelRows.find((x) => x.id === klass.parallel_id) : undefined
+      const prefix = parallel?.name ?? ''
+      const glue = /^\d+$/.test(prefix) && (klass?.name.length ?? 0) <= 2 ? '' : ' '
+      return {
+        id: p.id,
+        school_id: p.school_id,
+        school_name: schoolRows.find((s) => s.id === p.school_id)?.name ?? null,
+        role: p.role,
+        full_name:
+          [p.last_name, p.first_name, p.middle_name].filter(Boolean).join(' ').trim() ||
+          p.login ||
+          'Без имени',
+        login: p.login,
+        user_id: p.user_id,
+        email: userRows.find((u) => u.id === p.user_id)?.email ?? null,
+        is_active: p.is_active,
+        class_label: klass ? `${prefix}${glue}${klass.name}`.trim() : null,
+      }
+    })
+  }
+
+  async platformAudit(limit = 200): Promise<PlatformAuditEntry[]> {
+    const [audit, users] = await Promise.all([
+      supabase().from('platform_audit').select('*').order('created_at', { ascending: false }).limit(limit),
+      supabase().from('users').select('id, name'),
+    ])
+    if (audit.error) throw new Error(humanError(audit.error))
+    const userRows = (users.data ?? []) as Array<{ id: string; name: string | null }>
+    return ((audit.data ?? []) as unknown as PlatformAuditEntry[]).map((row) => ({
+      ...row,
+      actor_name: userRows.find((u) => u.id === row.actor_id)?.name ?? null,
+    }))
+  }
+
+  async platformLog(entry: {
+    action: string
+    target_type?: string | null
+    target_id?: string | null
+    target_label?: string | null
+    meta?: Record<string, unknown>
+  }): Promise<void> {
+    const me = await this.requireUser()
+    // журнал не должен ронять действие: если запись не прошла, работаем дальше
+    await supabase().from('platform_audit').insert({
+      actor_id: me.id,
+      action: entry.action,
+      target_type: entry.target_type ?? null,
+      target_id: entry.target_id ?? null,
+      target_label: entry.target_label ?? null,
+      meta: entry.meta ?? {},
+    })
+  }
+
+  async platformBlockSchool(schoolId: string, blocked: boolean, reason?: string | null): Promise<void> {
+    const { error } = await supabase()
+      .from('schools')
+      .update({ is_blocked: blocked, blocked_reason: blocked ? (reason ?? null) : null })
+      .eq('id', schoolId)
+    if (error) throw new Error(humanError(error))
+    await this.platformLog({
+      action: blocked ? 'school.block' : 'school.unblock',
+      target_type: 'school',
+      target_id: schoolId,
+      meta: reason ? { reason } : {},
+    })
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async platformResetPassword(personId: string, password: string): Promise<void> {
+    const { data: rows } = await supabase()
+      .from('school_people')
+      .select('id, school_id, last_name, first_name, login')
+      .eq('id', personId)
+      .maybeSingle()
+    const person = rows as { school_id: string; last_name: string; first_name: string; login: string | null } | null
+    if (!person) throw new Error('Человек не найден')
+
+    const results = await this.setAccountPassword(person.school_id, [{ person_id: personId, password }])
+    const bad = results.find((r) => !r.ok)
+    if (bad) throw new Error(bad.error ?? 'Не удалось сменить пароль')
+
+    await this.platformLog({
+      action: 'person.reset_password',
+      target_type: 'school_person',
+      target_id: personId,
+      target_label: `${person.last_name} ${person.first_name}`.trim() || person.login || personId,
+      meta: { school_id: person.school_id },
+    })
+  }
+
+
+  async platformSearch(query: string): Promise<PlatformFinding[]> {
+    const q = query.trim()
+    if (q.length < 2) return []
+    const { data, error } = await supabase().rpc('platform_search', { p_query: q, p_limit: 200 })
+    if (error) throw new Error(humanError(error))
+    return (data ?? []) as unknown as PlatformFinding[]
+  }
+
+  async platformHide(
+    kind: 'material' | 'comment',
+    id: string,
+    hidden: boolean,
+    reason?: string | null,
+    label?: string | null,
+  ): Promise<void> {
+    const fn = kind === 'material' ? 'platform_hide_material' : 'platform_hide_comment'
+    const { error } = await supabase().rpc(fn, { p_id: id, p_hidden: hidden, p_reason: reason ?? null })
+    if (error) throw new Error(humanError(error))
+    await this.platformLog({
+      action: hidden ? `${kind}.hide` : `${kind}.unhide`,
+      target_type: kind,
+      target_id: id,
+      target_label: label ?? null,
+      meta: reason ? { reason } : {},
+    })
+  }
+
+  async platformOpenIncident(input: {
+    title: string
+    note?: string | null
+    finding: PlatformFinding
+  }): Promise<PlatformIncident> {
+    const me = await this.requireUser()
+    const f = input.finding
+    const row = unwrap(
+      await supabase()
+        .from('platform_incidents')
+        .insert({
+          opened_by: me.id,
+          kind: 'content',
+          title: input.title,
+          note: input.note ?? null,
+          // снимок делаем прямо из находки: если оригинал потом изменят или
+          // удалят, здесь останется то, что было в момент обнаружения
+          snapshot: {
+            kind: f.kind,
+            title: f.title,
+            excerpt: f.excerpt,
+            author_name: f.author_name,
+            space_name: f.space_name,
+            school_name: f.school_name,
+            created_at: f.created_at,
+            captured_at: new Date().toISOString(),
+          },
+          source_type: f.kind,
+          source_id: f.id,
+          space_id: f.space_id,
+          author_id: f.author_id,
+        })
+        .select()
+        .single(),
+    ) as unknown as PlatformIncident
+
+    await this.platformLog({
+      action: 'incident.open',
+      target_type: f.kind,
+      target_id: f.id,
+      target_label: input.title,
+    })
+    return row
+  }
+
+  async platformIncidents(): Promise<PlatformIncident[]> {
+    const [rows, users] = await Promise.all([
+      supabase().from('platform_incidents').select('*').order('created_at', { ascending: false }),
+      supabase().from('users').select('id, name'),
+    ])
+    if (rows.error) throw new Error(humanError(rows.error))
+    const userRows = (users.data ?? []) as Array<{ id: string; name: string | null }>
+    return ((rows.data ?? []) as unknown as PlatformIncident[]).map((r) => ({
+      ...r,
+      opened_by_name: userRows.find((u) => u.id === r.opened_by)?.name ?? null,
+    }))
+  }
+
+  async platformCloseIncident(id: string, closed: boolean): Promise<void> {
+    const { error } = await supabase()
+      .from('platform_incidents')
+      .update({ status: closed ? 'closed' : 'open', closed_at: closed ? new Date().toISOString() : null })
+      .eq('id', id)
+    if (error) throw new Error(humanError(error))
+    await this.platformLog({
+      action: closed ? 'incident.close' : 'incident.reopen',
+      target_type: 'incident',
+      target_id: id,
+    })
   }
 
   subscribe(cb: (e: ChangeEvent) => void): () => void {

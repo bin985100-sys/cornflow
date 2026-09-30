@@ -696,3 +696,116 @@ export interface AccountResult {
   error?: string
   login?: string
 }
+
+/* =========================================================================
+   Платформа — уровень над школами (миграция 0015_platform_admin.sql)
+   ========================================================================= */
+
+/** Сводка по всей платформе: считается на сервере, одним запросом */
+export interface PlatformOverview {
+  users: number
+  schools: number
+  blocked: number
+  spaces: number
+  people: number
+  students: number
+  teachers: number
+  no_account: number
+  materials: number
+  assignments: number
+  grades: number
+  courses: number
+  new_users_7d: number
+}
+
+/** Школа в списке главного админа: с владельцем и размерами */
+export interface PlatformSchool {
+  id: string
+  name: string
+  code: string
+  owner_id: string
+  owner_name: string | null
+  owner_email: string | null
+  is_blocked: boolean
+  blocked_reason: string | null
+  created_at: string
+  people: number
+  students: number
+  teachers: number
+  spaces: number
+}
+
+/** Пространство в списке главного админа */
+export interface PlatformSpace {
+  id: string
+  name: string
+  color: CardColor
+  owner_id: string
+  owner_name: string | null
+  school_id: string | null
+  school_name: string | null
+  members: number
+  materials: number
+  created_at: string
+}
+
+/** Человек в общем поиске: из какой школы, есть ли аккаунт */
+export interface PlatformPerson {
+  id: string
+  school_id: string
+  school_name: string | null
+  role: SchoolRole
+  full_name: string
+  login: string | null
+  user_id: string | null
+  email: string | null
+  is_active: boolean
+  class_label: string | null
+}
+
+/** Запись журнала действий главного админа */
+export interface PlatformAuditEntry {
+  id: string
+  actor_id: string | null
+  actor_name: string | null
+  action: string
+  target_type: string | null
+  target_id: string | null
+  target_label: string | null
+  meta: Record<string, unknown>
+  created_at: string
+}
+
+/** Находка поиска по всему содержимому платформы */
+export interface PlatformFinding {
+  kind: 'material' | 'comment' | 'assignment'
+  id: string
+  space_id: string
+  space_name: string | null
+  school_name: string | null
+  author_id: string | null
+  author_name: string | null
+  title: string
+  excerpt: string
+  is_hidden: boolean
+  created_at: string
+}
+
+/** Инцидент: снимок находки на момент обнаружения */
+export interface PlatformIncident {
+  id: string
+  opened_by: string | null
+  opened_by_name: string | null
+  kind: string
+  status: string
+  title: string
+  note: string | null
+  snapshot: Record<string, unknown>
+  source_type: string | null
+  source_id: string | null
+  space_id: string | null
+  school_id: string | null
+  author_id: string | null
+  created_at: string
+  closed_at: string | null
+}

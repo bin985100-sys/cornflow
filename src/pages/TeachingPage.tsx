@@ -4,7 +4,7 @@ import { ArrowRight, BookOpen, GraduationCap, UserCog, Users } from 'lucide-reac
 import { useAuth } from '@/context/AuthContext'
 import { useSchool } from '@/hooks/useSchool'
 import { EmptyState, Skeleton } from '@/components/ui/primitives'
-import { cardPalette } from '@/lib/utils'
+import { cardPalette, plural } from '@/lib/utils'
 import type { GroupView, SchoolPerson, SubjectView, TeachingAssignment } from '@/lib/types'
 
 /**
@@ -83,8 +83,7 @@ export function TeachingPage() {
         <div>
           <h1 className="text-[22px] font-bold tracking-[-0.02em]">Мои группы</h1>
           <p className="mt-1 text-[13px] text-ink-3">
-            {school.school.name} · {bySubject.length}{' '}
-            {plural(bySubject.length, 'предмет', 'предмета', 'предметов')} · {groupCount}{' '}
+            {school.school.name} · {plural(bySubject.length, 'предмет', 'предмета', 'предметов')} ·{' '}
             {plural(groupCount, 'группа', 'группы', 'групп')}
           </p>
         </div>
@@ -121,7 +120,7 @@ export function TeachingPage() {
                     <span className="cf-pill px-2 py-[2px] text-[11px] text-ink-3">МО {department.name}</span>
                   )}
                   <span className="text-[12.5px] text-ink-3">
-                    {items.length} {plural(items.length, 'группа', 'группы', 'групп')}
+                    {plural(items.length, 'группа', 'группы', 'групп')}
                   </span>
                 </header>
 
@@ -202,13 +201,4 @@ function GroupCard({
       )}
     </button>
   )
-}
-
-function plural(n: number, one: string, few: string, many: string): string {
-  const mod100 = n % 100
-  if (mod100 >= 11 && mod100 <= 14) return many
-  const mod10 = n % 10
-  if (mod10 === 1) return one
-  if (mod10 >= 2 && mod10 <= 4) return few
-  return many
 }

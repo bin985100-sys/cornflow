@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
@@ -19,11 +19,13 @@ import {
   Moon,
   Plus,
   Settings,
+  ShieldAlert,
   Star,
   Sun,
   UserPlus,
   Users,
 } from 'lucide-react'
+import { db } from '@/lib/db'
 import { useApp } from '@/context/AppContext'
 import { useAuth } from '@/context/AuthContext'
 import { useCreate } from '@/context/CreateContext'
@@ -38,6 +40,15 @@ export function Sidebar() {
   const { spaces, space, setSpaceId, folders, allMaterials, sidebarOpen, setSidebarOpen, canEdit, canManage, isOwner, spaceRoleLabel, online, showAssignments, showCalendar } =
     useApp()
   const { user, signOut, isTeacher } = useAuth()
+  // ссылка на панель платформы видна только владельцу сервиса
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void db.isPlatformAdmin().then((v) => alive && setIsPlatformAdmin(v)).catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [user?.id])
   const create = useCreate()
   const { theme, toggle } = useTheme()
   const navigate = useNavigate()
@@ -244,6 +255,7 @@ export function Sidebar() {
           <SidebarLink to="/app/tasks" icon={CheckSquare} label="Задачи" />
           {showCalendar && <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />}
           {isOwner && <SidebarLink to="/app/progress" icon={Users} label="Прогресс учеников" />}
+          {isPlatformAdmin && <SidebarLink to="/platform" icon={ShieldAlert} label="Платформа" />}
 
           {/* Избранное */}
           <SectionTitle

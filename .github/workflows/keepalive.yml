@@ -63,21 +63,42 @@ jobs:
           echo "touch_heartbeat -> HTTP $code"
           cat /tmp/out.txt || true
 
-          # Если функции ещё нет (миграция 0014 не прогнана) — падать не нужно:
-          # обычное чтение тоже считается обращением к базе.
+          # Если функции ещё нет (миграция 0014 не прогнана) — берём любую
+          # таблицу, которая точно есть: нам важен сам запрос к базе.
           if [ "$code" != "200" ]; then
             echo "::warning::touch_heartbeat nedostupna (HTTP $code), probuyem chtenie"
             code=$(curl -sS -o /tmp/out2.txt -w '%{http_code}' \
-              "$SB_URL/rest/v1/heartbeat?select=pinged_at&limit=1" \
+              "$SB_URL/rest/v1/spaces?select=id&limit=1" \
               -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" --max-time 30) || true
-            echo "select heartbeat -> HTTP $code"
+            echo "select spaces -> HTTP $code"
             cat /tmp/out2.txt || true
           fi
 
-          # 5xx и пустой ответ означают, что проект уже лежит — сообщаем громко
+          # Разбираем ответ честно. 404 от PostgREST означает, что база ответила
+          # и всё с ней хорошо, просто таблицы нет — это не повод кричать, что
+          # проект на паузе. На паузе не отвечает вообще ничего.
           case "$code" in
-            200|206) echo "Baza otvechaet, proekt aktiven." ;;
-            000)     echo "::error::Supabase ne otvetil vovse. Vozmozhno, proekt na pauze."; exit 1 ;;
-            5*)      echo "::error::Supabase otvetil $code. Vozmozhno, proekt na pauze."; exit 1 ;;
-            *)       echo "::error::Neozhidannyy otvet $code."; exit 1 ;;
+            200|206)
+              echo "Baza otvechaet, proekt aktiven."
+              ;;
+            404)
+              echo "::warning::Baza otvetila, no migraciya 0014 ne progana - zapusti SQL iz supabase/migrations."
+              echo "Zapros do bazy doshyol, dlya keepalive etogo dostatochno."
+              ;;
+            401|403)
+              echo "::error::Klyuch otklonyon ($code). Proverit VITE_SUPABASE_ANON_KEY v Variables."
+              exit 1
+              ;;
+            000)
+              echo "::error::Supabase ne otvetil vovse. Skoree vsego proekt na pauze."
+              exit 1
+              ;;
+            5*)
+              echo "::error::Supabase otvetil $code - proekt lezhit ili perezagruzhaetsya."
+              exit 1
+              ;;
+            *)
+              echo "::error::Neozhidannyy otvet $code."
+              exit 1
+              ;;
           esac

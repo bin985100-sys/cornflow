@@ -45,6 +45,13 @@ import type {
   GroupKind,
   GroupView,
   School,
+  PlatformAuditEntry,
+  PlatformFinding,
+  PlatformIncident,
+  PlatformOverview,
+  PlatformPerson,
+  PlatformSchool,
+  PlatformSpace,
   SchoolClass,
   SchoolDepartment,
   SchoolGroup,
@@ -516,6 +523,55 @@ export interface DataProvider {
 
   /** Вход по школьному аккаунту */
   signInToSchool?(input: SchoolSignInInput): Promise<User>
+
+  /* ----------------------------------------------------------------------
+     Платформа. Уровень над школами: владелец сервиса видит всё и разбирает
+     инциденты. Роль выдаётся только строкой в таблице platform_admins —
+     из приложения её получить нельзя.
+     ---------------------------------------------------------------------- */
+
+  /** Главный админ ли текущий пользователь */
+  isPlatformAdmin(): Promise<boolean>
+  platformOverview(): Promise<PlatformOverview>
+  platformSchools(): Promise<PlatformSchool[]>
+  platformSpaces(): Promise<PlatformSpace[]>
+  /** Поиск по людям всех школ; пустой запрос — первая страница */
+  platformPeople(query: string): Promise<PlatformPerson[]>
+  platformAudit(limit?: number): Promise<PlatformAuditEntry[]>
+  /** Записать действие в журнал: он неизменяемый, правок в нём не бывает */
+  platformLog(entry: {
+    action: string
+    target_type?: string | null
+    target_id?: string | null
+    target_label?: string | null
+    meta?: Record<string, unknown>
+  }): Promise<void>
+  /** Закрыть или открыть вход школе целиком */
+  platformBlockSchool(schoolId: string, blocked: boolean, reason?: string | null): Promise<void>
+  /**
+   * Сбросить пароль человеку в любой школе. Показать текущий пароль нельзя:
+   * в базе лежит bcrypt-хеш, исходного текста не существует.
+   */
+  platformResetPassword(personId: string, password: string): Promise<void>
+
+  /** Поиск по материалам, конспектам, комментариям и заданиям всей платформы */
+  platformSearch(query: string): Promise<PlatformFinding[]>
+  /** Скрыть находку из доступа участникам; оригинал остаётся в базе */
+  platformHide(
+    kind: 'material' | 'comment',
+    id: string,
+    hidden: boolean,
+    reason?: string | null,
+    label?: string | null,
+  ): Promise<void>
+  /** Сохранить снимок находки: содержимое, автор, место и время */
+  platformOpenIncident(input: {
+    title: string
+    note?: string | null
+    finding: PlatformFinding
+  }): Promise<PlatformIncident>
+  platformIncidents(): Promise<PlatformIncident[]>
+  platformCloseIncident(id: string, closed: boolean): Promise<void>
 
   /* --- realtime --- */
   subscribe(cb: (e: ChangeEvent) => void): () => void
