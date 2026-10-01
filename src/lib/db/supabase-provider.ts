@@ -1,4 +1,5 @@
 import type {
+  MyMembership,
   Assignment,
   AssignmentView,
   CardColor,
@@ -48,8 +49,12 @@ import type {
   PlatformPerson,
   PlatformSchool,
   PlatformSpace,
+  PersonAccess,
   SchoolClass,
   SchoolDepartment,
+  SchoolHoliday,
+  SchoolLevel,
+  SchoolTerm,
   SchoolGroup,
   SchoolParallel,
   SchoolPerson,
@@ -1740,6 +1745,11 @@ export class SupabaseProvider implements DataProvider {
       groupTeachers,
       assignments,
       assignmentTeachers,
+      terms,
+      holidays,
+      roleRows,
+      classRows,
+      childRows,
     ] = await Promise.all([
       supabase().from('schools').select('*').eq('id', schoolId).single(),
       supabase().from('school_parallels').select('*').eq('school_id', schoolId).order('position'),
@@ -1754,6 +1764,11 @@ export class SupabaseProvider implements DataProvider {
       supabase().from('group_teachers').select('*'),
       supabase().from('teaching_assignments').select('*').eq('school_id', schoolId),
       supabase().from('teaching_teachers').select('*'),
+      supabase().from('school_terms').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('school_holidays').select('*').eq('school_id', schoolId).order('start_date'),
+      supabase().from('person_roles').select('*'),
+      supabase().from('person_classes').select('*'),
+      supabase().from('parent_children').select('*'),
     ])
 
     if (school.error) throw new Error(humanError(school.error))
@@ -1775,9 +1790,29 @@ export class SupabaseProvider implements DataProvider {
     const mine = peopleRows.find((p) => p.user_id === me.id)
     const role: SchoolRole = s.owner_id === me.id ? 'admin' : (mine?.role ?? 'student')
 
+    const personRoles = (roleRows.data ?? []) as Array<{ person_id: string; role: SchoolRole }>
+    const personClasses = (classRows.data ?? []) as Array<{ person_id: string; class_id: string }>
+    const parentChildren = (childRows.data ?? []) as Array<{ parent_id: string; child_id: string }>
+
+    const access: PersonAccess[] = peopleRows.map((p) => ({
+      person_id: p.id,
+      // основная роль всегда входит в набор, даже если строки в person_roles нет
+      roles: [...new Set([p.role, ...personRoles.filter((r) => r.person_id === p.id).map((r) => r.role)])],
+      class_ids: personClasses.filter((c) => c.person_id === p.id).map((c) => c.class_id),
+      child_ids: parentChildren.filter((c) => c.parent_id === p.id).map((c) => c.child_id),
+    }))
+
+    const myRoles: SchoolRole[] = s.owner_id === me.id
+      ? ['admin']
+      : (access.find((a) => a.person_id === mine?.id)?.roles ?? [role])
+
     return {
       school: s,
       role,
+      myRoles,
+      terms: (terms.data ?? []) as unknown as SchoolTerm[],
+      holidays: (holidays.data ?? []) as unknown as SchoolHoliday[],
+      access,
       parallels: (parallels.data ?? []) as unknown as SchoolParallel[],
       classes: (classes.data ?? []) as unknown as SchoolClass[],
       people: peopleRows,
@@ -1832,11 +1867,16 @@ export class SupabaseProvider implements DataProvider {
     this.listeners.forEach((l) => l({ table: 'school' }))
   }
 
-  async createClass(schoolId: string, parallelId: string, name: string): Promise<SchoolClass> {
+  async createClass(
+    schoolId: string,
+    parallelId: string,
+    name: string,
+    level?: SchoolLevel | null,
+  ): Promise<SchoolClass> {
     const row = unwrap(
       await supabase()
         .from('school_classes')
-        .insert({ school_id: schoolId, parallel_id: parallelId, name: name.trim() })
+        .insert({ school_id: schoolId, parallel_id: parallelId, name: name.trim(), level: level ?? null })
         .select()
         .single(),
     ) as unknown as SchoolClass
@@ -1846,7 +1886,7 @@ export class SupabaseProvider implements DataProvider {
 
   async updateClass(
     id: string,
-    patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position'>>,
+    patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position' | 'level'>>,
   ): Promise<SchoolClass> {
     const row = unwrap(
       await supabase().from('school_classes').update(patch).eq('id', id).select().single(),
@@ -2113,6 +2153,7 @@ export class SupabaseProvider implements DataProvider {
           kind: input.kind,
           parallel_id: input.parallel_id ?? null,
           class_id: input.class_id ?? null,
+          term_id: input.term_id ?? null,
         })
         .select()
         .single(),
@@ -2133,7 +2174,7 @@ export class SupabaseProvider implements DataProvider {
 
   async updateGroup(
     id: string,
-    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & {
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id' | 'term_id'>> & {
       member_ids?: string[]
       teacher_ids?: string[]
     },
@@ -2344,6 +2385,124 @@ export class SupabaseProvider implements DataProvider {
     this.listeners.forEach((l) => l({ table: 'school' }))
   }
 
+
+  /* ------------------- отчётные периоды и каникулы ---------------------- */
+
+  async createTerm(input: Omit<SchoolTerm, 'id' | 'created_at'>): Promise<SchoolTerm> {
+    const row = unwrap(
+      await supabase().from('school_terms').insert(input).select().single(),
+    ) as unknown as SchoolTerm
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updateTerm(
+    id: string,
+    patch: Partial<Pick<SchoolTerm, 'name' | 'start_date' | 'end_date' | 'position' | 'is_current'>>,
+  ): Promise<SchoolTerm> {
+    // текущий период в школе может быть только один
+    if (patch.is_current) {
+      const { data } = await supabase().from('school_terms').select('school_id').eq('id', id).maybeSingle()
+      const schoolId = (data as { school_id?: string } | null)?.school_id
+      if (schoolId) {
+        await supabase().from('school_terms').update({ is_current: false }).eq('school_id', schoolId)
+      }
+    }
+    const row = unwrap(
+      await supabase().from('school_terms').update(patch).eq('id', id).select().single(),
+    ) as unknown as SchoolTerm
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteTerm(id: string): Promise<void> {
+    const { error } = await supabase().from('school_terms').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async createTermPreset(schoolId: string, yearStart: string): Promise<void> {
+    const { error } = await supabase().rpc('school_term_preset', {
+      p_school: schoolId,
+      p_year_start: yearStart,
+    })
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async createHoliday(
+    schoolId: string,
+    name: string,
+    start: string,
+    end: string,
+  ): Promise<SchoolHoliday> {
+    const row = unwrap(
+      await supabase()
+        .from('school_holidays')
+        .insert({ school_id: schoolId, name: name.trim(), start_date: start, end_date: end })
+        .select()
+        .single(),
+    ) as unknown as SchoolHoliday
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updateHoliday(
+    id: string,
+    patch: Partial<Pick<SchoolHoliday, 'name' | 'start_date' | 'end_date'>>,
+  ): Promise<SchoolHoliday> {
+    const row = unwrap(
+      await supabase().from('school_holidays').update(patch).eq('id', id).select().single(),
+    ) as unknown as SchoolHoliday
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteHoliday(id: string): Promise<void> {
+    const { error } = await supabase().from('school_holidays').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /* ---------------------- роли и привязки человека ---------------------- */
+
+  async setPersonRoles(personId: string, roles: SchoolRole[]): Promise<void> {
+    const list = [...new Set(roles)]
+    await supabase().from('person_roles').delete().eq('person_id', personId)
+    if (list.length) {
+      const { error } = await supabase()
+        .from('person_roles')
+        .insert(list.map((role) => ({ person_id: personId, role })))
+      if (error) throw new Error(humanError(error))
+      // основной остаётся первая роль: по ней работает вход и старые проверки
+      await supabase().from('school_people').update({ role: list[0] }).eq('id', personId)
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async setPersonClasses(personId: string, classIds: string[]): Promise<void> {
+    await supabase().from('person_classes').delete().eq('person_id', personId)
+    if (classIds.length) {
+      const { error } = await supabase()
+        .from('person_classes')
+        .insert([...new Set(classIds)].map((class_id) => ({ person_id: personId, class_id })))
+      if (error) throw new Error(humanError(error))
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async setParentChildren(parentId: string, childIds: string[]): Promise<void> {
+    await supabase().from('parent_children').delete().eq('parent_id', parentId)
+    const list = [...new Set(childIds)].filter((id) => id !== parentId)
+    if (list.length) {
+      const { error } = await supabase()
+        .from('parent_children')
+        .insert(list.map((child_id) => ({ parent_id: parentId, child_id })))
+      if (error) throw new Error(humanError(error))
+    }
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
   /** Вход по школьному аккаунту: код школы + логин + выданный пароль */
   async signInToSchool(input: SchoolSignInInput): Promise<User> {
     const code = input.code.trim()
@@ -2368,6 +2527,61 @@ export class SupabaseProvider implements DataProvider {
 
 
   /* ============================ платформа ================================ */
+
+  /**
+   * Роли во всех школах пользователя — три коротких запроса вместо полного
+   * справочника: приложению нужен только список доступных интерфейсов.
+   */
+  async myMemberships(): Promise<MyMembership[]> {
+    const me = await this.requireUser()
+    const [{ data: personRows }, { data: ownedRows }] = await Promise.all([
+      supabase().from('school_people').select('id, school_id, role, schools(name)').eq('user_id', me.id),
+      supabase().from('schools').select('id, name').eq('owner_id', me.id),
+    ])
+
+    const people = (personRows ?? []) as unknown as Array<{
+      id: string
+      school_id: string
+      role: SchoolRole
+      schools: { name: string } | null
+    }>
+
+    let extra: Array<{ person_id: string; role: SchoolRole }> = []
+    if (people.length) {
+      const { data } = await supabase()
+        .from('person_roles')
+        .select('person_id, role')
+        .in('person_id', people.map((p) => p.id))
+      extra = (data ?? []) as Array<{ person_id: string; role: SchoolRole }>
+    }
+
+    const list: MyMembership[] = people.map((p) => ({
+      school_id: p.school_id,
+      school_name: p.schools?.name ?? 'Школа',
+      person_id: p.id,
+      is_owner: false,
+      roles: [...new Set([p.role, ...extra.filter((r) => r.person_id === p.id).map((r) => r.role)])],
+    }))
+
+    // владелец школы — администратор, даже если строки в school_people нет
+    for (const owned of (ownedRows ?? []) as Array<{ id: string; name: string }>) {
+      const found = list.find((m) => m.school_id === owned.id)
+      if (found) {
+        found.is_owner = true
+        if (!found.roles.includes('admin')) found.roles.push('admin')
+      } else {
+        list.push({
+          school_id: owned.id,
+          school_name: owned.name,
+          person_id: null,
+          is_owner: true,
+          roles: ['admin'],
+        })
+      }
+    }
+
+    return list
+  }
 
   async isPlatformAdmin(): Promise<boolean> {
     const { data, error } = await supabase().rpc('is_platform_admin')
@@ -2642,6 +2856,39 @@ export class SupabaseProvider implements DataProvider {
       ...r,
       opened_by_name: userRows.find((u) => u.id === r.opened_by)?.name ?? null,
     }))
+  }
+
+  async platformSpace(spaceId: string): Promise<SpaceView | null> {
+    const me = await this.requireUser()
+    const { data, error } = await supabase().from('spaces').select('*').eq('id', spaceId).maybeSingle()
+    if (error || !data) return null
+    const space = data as unknown as Space
+
+    const { data: memberRows } = await supabase()
+      .from('space_members')
+      .select('space_id, user_id, permission, users(id, name, avatar, role)')
+      .eq('space_id', spaceId)
+    const members = (memberRows ?? []) as unknown as Array<{
+      user_id: string
+      permission: Permission
+      users: { id: string; name: string; avatar: string | null; role: User['role'] } | null
+    }>
+
+    return {
+      ...space,
+      // право на правку даёт роль на платформе, а не членство в курсе
+      permission: 'edit',
+      is_owner: space.owner_id === me.id,
+      members: members
+        .filter((m) => m.users)
+        .map((m) => ({
+          id: m.users!.id,
+          name: m.users!.name,
+          avatar: m.users!.avatar,
+          role: m.users!.role,
+          permission: m.permission,
+        })),
+    } as unknown as SpaceView
   }
 
   async platformCloseIncident(id: string, closed: boolean): Promise<void> {

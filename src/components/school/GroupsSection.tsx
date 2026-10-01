@@ -64,6 +64,9 @@ function GroupCard({ group, school }: { group: GroupView; school: SchoolApi }) {
         <Users size={16} className="text-ink-3" />
         <h3 className="text-[15px] font-semibold">{group.name}</h3>
         <span className="cf-pill px-2 py-[2px] text-[11px] text-ink-3">{scope}</span>
+        {group.term_id && (
+          <span className="cf-pill px-2 py-[2px] text-[11px] text-ink-3">{school.termLabel(group.term_id)}</span>
+        )}
         {school.isAdmin && (
           <div className="ml-auto flex items-center gap-1.5">
             <button className="cf-btn-ghost px-3 py-1.5 text-[12.5px]" onClick={() => setEditing(true)}>
@@ -139,6 +142,7 @@ function GroupModal({
   const [classId, setClassId] = useState(group?.class_id ?? '')
   const [members, setMembers] = useState<string[]>(group?.member_ids ?? [])
   const [teacherIds, setTeacherIds] = useState<string[]>(group?.teacher_ids ?? [])
+  const [termId, setTermId] = useState(group?.term_id ?? school.currentTerm?.id ?? '')
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -180,6 +184,7 @@ function GroupModal({
         class_id: kind === 'class' ? classId || null : null,
         member_ids: members,
         teacher_ids: teacherIds,
+        term_id: termId || null,
       }
       if (group) await db.updateGroup(group.id, payload)
       else await db.createGroup({ school_id: school.schoolId, kind, ...payload })
@@ -204,6 +209,33 @@ function GroupModal({
             onChange={(e) => setName(e.target.value)}
             autoFocus
           />
+        </div>
+
+        <div>
+          <span className="mb-1 block text-[12.5px] text-ink-2">Отчётный период</span>
+          <select className="cf-input w-full" value={termId} onChange={(e) => setTermId(e.target.value)}>
+            <option value="">без периода</option>
+            {school.years.map((year) => (
+              <optgroup key={year.id} label={year.name}>
+                {school.termChildren(year.id).flatMap((half) => [
+                  <option key={half.id} value={half.id}>
+                    {half.name}
+                  </option>,
+                  ...school.termChildren(half.id).map((q) => (
+                    <option key={q.id} value={q.id}>
+                      {'\u00A0\u00A0'}
+                      {q.name}
+                    </option>
+                  )),
+                ])}
+              </optgroup>
+            ))}
+          </select>
+          <p className="mt-1 text-[12px] text-ink-3">
+            {school.years.length
+              ? 'По нему считаются своды оценок и режется расписание.'
+              : 'Периоды заводятся в разделе «Периоды».'}
+          </p>
         </div>
 
         <div>

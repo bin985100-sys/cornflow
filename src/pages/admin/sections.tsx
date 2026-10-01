@@ -3,6 +3,7 @@ import { DepartmentsSection } from '@/components/school/DepartmentsSection'
 import { GroupsSection } from '@/components/school/GroupsSection'
 import { PeopleSection } from '@/components/school/PeopleSection'
 import { SubjectsSection } from '@/components/school/SubjectsSection'
+import { TermsSection } from '@/components/school/TermsSection'
 import { TeachingSection } from '@/components/school/TeachingSection'
 import { useSchoolCtx } from '@/context/SchoolContext'
 
@@ -17,6 +18,17 @@ function Page({ title, subtitle, children }: { title: string; subtitle: string; 
       </header>
       {children}
     </div>
+  )
+}
+
+export function AdminTermsPage() {
+  return (
+    <Page
+      title="Периоды"
+      subtitle="Учебный год, полугодия и четверти — по ним считаются своды оценок. Плюс каникулы: на эти дни расписание не ставится."
+    >
+      <TermsSection school={useSchoolCtx()} />
+    </Page>
   )
 }
 

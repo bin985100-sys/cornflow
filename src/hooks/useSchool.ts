@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { db } from '@/lib/db'
 import type {
   GroupView,
+  PersonAccess,
   School,
   SchoolClass,
   SchoolPerson,
+  SchoolRole,
   SchoolSnapshot,
+  SchoolTerm,
   SubjectView,
 } from '@/lib/types'
 
@@ -14,6 +17,10 @@ const ACTIVE_KEY = 'cornflow.school'
 const EMPTY: SchoolSnapshot = {
   school: { id: '', name: '', code: '', owner_id: '', created_at: '' },
   role: 'student',
+  myRoles: ['student'],
+  terms: [],
+  holidays: [],
+  access: [],
   parallels: [],
   classes: [],
   people: [],
@@ -43,6 +50,26 @@ export interface SchoolApi extends SchoolSnapshot {
   groupTeachers: (group: GroupView) => SchoolPerson[]
   /** краткое «класс 9А» / «параллель 9» / «смешанная» */
   groupScope: (group: GroupView) => string
+  /** учебные годы, внутри каждого — полугодия и четверти */
+  years: SchoolTerm[]
+  /** вложенные периоды: полугодия года или четверти полугодия */
+  termChildren: (parentId: string) => SchoolTerm[]
+  /** период, помеченный текущим; иначе тот, в который попадает сегодня */
+  currentTerm: SchoolTerm | null
+  termLabel: (termId: string | null | undefined) => string
+  /** роли и привязки человека */
+  accessOf: (personId: string) => PersonAccess
+  hasRole: (role: SchoolRole) => boolean
+}
+
+/** Названия ролей в единственном числе, для списков и чипов */
+export const ROLE_LABEL: Record<SchoolRole, string> = {
+  admin: 'Администратор',
+  teacher: 'Учитель',
+  student: 'Ученик',
+  parent: 'Родитель',
+  homeroom: 'Классный руководитель',
+  headteacher: 'Завуч',
 }
 
 /** Справочник школы: список школ, активная школа и её содержимое. */
@@ -147,6 +174,54 @@ export function useSchool(): SchoolApi {
     [classLabel, data.parallels],
   )
 
+  const years = useMemo(
+    () => data.terms.filter((t) => t.kind === 'year').sort((a, b) => a.position - b.position),
+    [data.terms],
+  )
+
+  const termChildren = useCallback(
+    (parentId: string) =>
+      data.terms.filter((t) => t.parent_id === parentId).sort((a, b) => a.position - b.position),
+    [data.terms],
+  )
+
+  const currentTerm = useMemo(() => {
+    const marked = data.terms.find((t) => t.is_current && t.kind !== 'year')
+    if (marked) return marked
+    // ничего не помечено — берём тот период, в который попадает сегодня
+    const today = new Date().toISOString().slice(0, 10)
+    return (
+      data.terms.find((t) => t.kind === 'quarter' && t.start_date <= today && today <= t.end_date) ??
+      data.terms.find((t) => t.is_current) ??
+      null
+    )
+  }, [data.terms])
+
+  const termLabel = useCallback(
+    (termId: string | null | undefined) => {
+      if (!termId) return 'без периода'
+      const term = data.terms.find((t) => t.id === termId)
+      if (!term) return 'период удалён'
+      const parent = term.parent_id ? data.terms.find((t) => t.id === term.parent_id) : null
+      const year = parent?.parent_id ? data.terms.find((t) => t.id === parent.parent_id) : parent
+      return year && year.id !== term.id ? `${term.name} · ${year.name}` : term.name
+    },
+    [data.terms],
+  )
+
+  const accessOf = useCallback(
+    (personId: string): PersonAccess =>
+      data.access.find((a) => a.person_id === personId) ?? {
+        person_id: personId,
+        roles: [],
+        class_ids: [],
+        child_ids: [],
+      },
+    [data.access],
+  )
+
+  const hasRole = useCallback((role: SchoolRole) => data.myRoles.includes(role), [data.myRoles])
+
   const students = useMemo(() => data.people.filter((p) => p.role === 'student'), [data.people])
   const teachers = useMemo(
     () => data.people.filter((p) => p.role === 'teacher' || p.role === 'admin'),
@@ -159,7 +234,8 @@ export function useSchool(): SchoolApi {
     schoolId,
     setSchoolId,
     loading,
-    isAdmin: data.role === 'admin',
+    // администратором делает и основная роль, и добавленная в person_roles
+    isAdmin: data.role === 'admin' || data.myRoles.includes('admin'),
     refresh: load,
     classLabel,
     fullName,
@@ -169,5 +245,11 @@ export function useSchool(): SchoolApi {
     subjectsByDepartment,
     groupTeachers,
     groupScope,
+    years,
+    termChildren,
+    currentTerm,
+    termLabel,
+    accessOf,
+    hasRole,
   }
 }

@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AppProvider } from '@/context/AppContext'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { CreateProvider } from '@/context/CreateContext'
+import { RoleProvider } from '@/context/RoleContext'
 import { ToastProvider } from '@/context/ToastContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Logo } from '@/components/layout/Logo'
@@ -23,6 +24,7 @@ import { AdminOverviewPage } from '@/pages/admin/AdminOverviewPage'
 import { AdminSettingsPage } from '@/pages/admin/AdminSettingsPage'
 import {
   AdminClassesPage,
+  AdminTermsPage,
   AdminCoursesPage,
   AdminDepartmentsPage,
   AdminGroupsPage,
@@ -79,6 +81,7 @@ function Shell() {
         }
       >
         <Route index element={<AdminOverviewPage />} />
+        <Route path="terms" element={<AdminTermsPage />} />
         <Route path="classes" element={<AdminClassesPage />} />
         <Route path="students" element={<AdminStudentsPage />} />
         <Route path="teachers" element={<AdminTeachersPage />} />
@@ -162,7 +165,9 @@ function Shell() {
 function Workspace({ children }: { children: ReactNode }) {
   return (
     <AppProvider>
-      <CreateProvider>{children}</CreateProvider>
+      <RoleProvider>
+        <CreateProvider>{children}</CreateProvider>
+      </RoleProvider>
     </AppProvider>
   )
 }

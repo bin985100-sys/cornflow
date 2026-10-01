@@ -20,6 +20,10 @@ import {
   Plus,
   Settings,
   ShieldAlert,
+  ShieldCheck,
+  Baby,
+  UserCog,
+  ClipboardCheck,
   Star,
   Sun,
   UserPlus,
@@ -34,12 +38,28 @@ import { cardPalette, cx } from '@/lib/utils'
 import { useTheme } from '@/hooks/useTheme'
 import { Avatar, AvatarStack } from '@/components/ui/primitives'
 import { Menu } from '@/components/ui/Menu'
+import { ROLE_HOME, useRoles } from '@/context/RoleContext'
+import { ROLE_LABEL } from '@/hooks/useSchool'
+import type { LucideIcon } from 'lucide-react'
+import type { SchoolRole } from '@/lib/types'
 import { Logo } from './Logo'
+
+const ROLE_ICON: Record<SchoolRole, LucideIcon> = {
+  student: GraduationCap,
+  teacher: UserCog,
+  parent: Baby,
+  homeroom: ClipboardCheck,
+  headteacher: ShieldCheck,
+  admin: ShieldCheck,
+}
 
 export function Sidebar() {
   const { spaces, space, setSpaceId, folders, allMaterials, sidebarOpen, setSidebarOpen, canEdit, canManage, isOwner, spaceRoleLabel, online, showAssignments, showCalendar } =
     useApp()
-  const { user, signOut, isTeacher } = useAuth()
+  const { user, signOut, isTeacher: accountTeacher } = useAuth()
+  const roleView = useRoles()
+  // роль в школе важнее роли аккаунта: один человек бывает и учителем, и родителем
+  const isTeacher = roleView.roles.length ? roleView.active === 'teacher' : accountTeacher
   // ссылка на панель платформы видна только владельцу сервиса
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
   useEffect(() => {
@@ -255,6 +275,7 @@ export function Sidebar() {
           <SidebarLink to="/app/tasks" icon={CheckSquare} label="Задачи" />
           {showCalendar && <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />}
           {isOwner && <SidebarLink to="/app/progress" icon={Users} label="Прогресс учеников" />}
+          {roleView.has('admin') && <SidebarLink to="/admin" icon={ShieldCheck} label="Админ-панель" />}
           {isPlatformAdmin && <SidebarLink to="/platform" icon={ShieldAlert} label="Платформа" />}
 
           {/* Избранное */}
@@ -317,6 +338,20 @@ export function Sidebar() {
             width={244}
             side="top"
             items={[
+              ...(roleView.roles.length > 1
+                ? [
+                    ...roleView.roles.map((role) => ({
+                      label: ROLE_LABEL[role],
+                      icon: ROLE_ICON[role],
+                      checked: role === roleView.active,
+                      onClick: () => {
+                        roleView.setActive(role)
+                        navigate(ROLE_HOME[role])
+                      },
+                    })),
+                    { label: '', separator: true },
+                  ]
+                : []),
               { label: 'Настройки', icon: Settings, onClick: () => navigate('/app/settings') },
               {
                 label: theme === 'dark' ? 'Светлая тема' : 'Тёмная тема',
@@ -341,7 +376,13 @@ export function Sidebar() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-semibold text-ink">{user?.name}</span>
                   <span className="block truncate text-[11.5px] text-ink-3">
-                    {space ? spaceRoleLabel : isTeacher ? 'Учитель' : 'Ученик'}
+                    {roleView.active
+                      ? ROLE_LABEL[roleView.active]
+                      : space
+                        ? spaceRoleLabel
+                        : isTeacher
+                          ? 'Учитель'
+                          : 'Ученик'}
                   </span>
                 </span>
                 <Settings size={15} className="shrink-0 text-ink-3" />

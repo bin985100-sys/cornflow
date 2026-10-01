@@ -553,7 +553,19 @@ export interface GradebookSnapshot {
    Школа — уровень над пространствами (миграция 0011_school.sql)
    ========================================================================= */
 
-export type SchoolRole = 'admin' | 'teacher' | 'student'
+export type SchoolRole =
+  | 'admin'
+  | 'teacher'
+  | 'student'
+  | 'parent'
+  | 'homeroom'
+  | 'headteacher'
+
+/** Ступень обучения, к которой относится класс */
+export type SchoolLevel = 'primary' | 'middle' | 'senior'
+
+/** Вид отчётного периода: год, в нём полугодия, в них четверти */
+export type TermKind = 'year' | 'semester' | 'quarter'
 export type GroupKind = 'class' | 'mixed'
 
 export interface School {
@@ -578,6 +590,8 @@ export interface SchoolPerson {
   /** привязанный аккаунт; пусто — человек есть в списке, но войти не может */
   user_id: string | null
   class_id: string | null
+  /** МО, к которому относится учитель */
+  department_id: string | null
   is_active: boolean
   note: string | null
   created_at: string
@@ -598,7 +612,37 @@ export interface SchoolClass {
   school_id: string
   parallel_id: string
   name: string
+  /** младшая, средняя или старшая школа; пусто — не задано */
+  level: SchoolLevel | null
   position: number
+  created_at: string
+}
+
+/**
+ * Отчётный период школы. Год лежит верхним уровнем, в нём полугодия,
+ * в полугодиях четверти. Журнальные периоды курса (grade_periods) живут
+ * отдельно и остаются как были — это общий календарь школы.
+ */
+export interface SchoolTerm {
+  id: string
+  school_id: string
+  parent_id: string | null
+  kind: TermKind
+  name: string
+  start_date: string
+  end_date: string
+  position: number
+  is_current: boolean
+  created_at: string
+}
+
+/** Каникулы: дни, в которые уроков нет */
+export interface SchoolHoliday {
+  id: string
+  school_id: string
+  name: string
+  start_date: string
+  end_date: string
   created_at: string
 }
 
@@ -647,6 +691,8 @@ export interface SchoolGroup {
   kind: GroupKind
   parallel_id: string | null
   class_id: string | null
+  /** отчётный период, к которому относится группа */
+  term_id: string | null
   created_at: string
 }
 
@@ -676,10 +722,38 @@ export interface GroupView extends SchoolGroup {
   teacher_ids: string[]
 }
 
+/** Человек со всеми ролями и привязками */
+export interface PersonAccess {
+  person_id: string
+  /** все роли: основная плюс добавленные */
+  roles: SchoolRole[]
+  /** классы классного руководителя или завуча */
+  class_ids: string[]
+  /** дети, если это родитель */
+  child_ids: string[]
+}
+
+/**
+ * Роли текущего пользователя в одной школе — дешёвый запрос для приложения.
+ *
+ * Весь справочник (SchoolSnapshot) грузится только в админ-панели, а
+ * приложению нужно лишь знать, какие интерфейсы доступны человеку.
+ */
+export interface MyMembership {
+  school_id: string
+  school_name: string
+  /** строка в school_people; у владельца школы её может не быть */
+  person_id: string | null
+  is_owner: boolean
+  roles: SchoolRole[]
+}
+
 /** Весь справочник школы за один запрос */
 export interface SchoolSnapshot {
   school: School
   role: SchoolRole
+  /** все роли текущего пользователя в этой школе */
+  myRoles: SchoolRole[]
   parallels: SchoolParallel[]
   classes: SchoolClass[]
   people: SchoolPerson[]
@@ -687,6 +761,9 @@ export interface SchoolSnapshot {
   subjects: SubjectView[]
   groups: GroupView[]
   assignments: TeachingAssignment[]
+  terms: SchoolTerm[]
+  holidays: SchoolHoliday[]
+  access: PersonAccess[]
 }
 
 /** Результат заведения аккаунтов серверной функцией */

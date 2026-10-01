@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   LogOut,
   Layers,
+  CalendarRange,
   Settings,
   ShieldCheck,
   UserCog,
@@ -23,6 +24,7 @@ import { cx } from '@/lib/utils'
 
 const NAV: Array<{ to: string; icon: LucideIcon; label: string; end?: boolean }> = [
   { to: '/admin', icon: LayoutGrid, label: 'Обзор', end: true },
+  { to: '/admin/terms', icon: CalendarRange, label: 'Периоды' },
   { to: '/admin/classes', icon: Layers, label: 'Классы' },
   { to: '/admin/students', icon: Users, label: 'Ученики' },
   { to: '/admin/teachers', icon: UserCog, label: 'Учителя' },

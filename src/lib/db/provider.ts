@@ -1,4 +1,5 @@
 import type {
+  MyMembership,
   Assignment,
   AssignmentView,
   Attendance,
@@ -54,6 +55,9 @@ import type {
   PlatformSpace,
   SchoolClass,
   SchoolDepartment,
+  SchoolHoliday,
+  SchoolLevel,
+  SchoolTerm,
   SchoolGroup,
   SchoolParallel,
   SchoolPerson,
@@ -113,6 +117,8 @@ export interface CreateGroupInput {
   kind: GroupKind
   parallel_id?: string | null
   class_id?: string | null
+  /** отчётный период, к которому относится группа */
+  term_id?: string | null
   member_ids?: string[]
   /** учителя, ведущие группу; их может быть несколько */
   teacher_ids?: string[]
@@ -445,8 +451,16 @@ export interface DataProvider {
   updateParallel(id: string, patch: Partial<Pick<SchoolParallel, 'name' | 'position'>>): Promise<SchoolParallel>
   deleteParallel(id: string): Promise<void>
 
-  createClass(schoolId: string, parallelId: string, name: string): Promise<SchoolClass>
-  updateClass(id: string, patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position'>>): Promise<SchoolClass>
+  createClass(
+    schoolId: string,
+    parallelId: string,
+    name: string,
+    level?: SchoolLevel | null,
+  ): Promise<SchoolClass>
+  updateClass(
+    id: string,
+    patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position' | 'level'>>,
+  ): Promise<SchoolClass>
   deleteClass(id: string): Promise<void>
 
   createPerson(input: CreatePersonInput): Promise<SchoolPerson>
@@ -455,7 +469,8 @@ export interface DataProvider {
   updatePerson(
     id: string,
     patch: Partial<Pick<SchoolPerson,
-      'last_name' | 'first_name' | 'middle_name' | 'class_id' | 'login' | 'is_active' | 'note' | 'role'>>,
+      'last_name' | 'first_name' | 'middle_name' | 'class_id' | 'login' | 'is_active' | 'note' | 'role'
+      | 'department_id'>>,
   ): Promise<SchoolPerson>
   deletePerson(id: string): Promise<void>
 
@@ -500,7 +515,7 @@ export interface DataProvider {
   createGroup(input: CreateGroupInput): Promise<GroupView>
   updateGroup(
     id: string,
-    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & {
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id' | 'term_id'>> & {
       member_ids?: string[]
       teacher_ids?: string[]
     },
@@ -521,6 +536,33 @@ export interface DataProvider {
   updateTeaching(id: string, patch: { teacher_ids: string[] }): Promise<TeachingAssignment>
   deleteTeaching(id: string): Promise<void>
 
+  /* --- отчётные периоды и каникулы --- */
+
+  createTerm(input: Omit<SchoolTerm, 'id' | 'created_at'>): Promise<SchoolTerm>
+  updateTerm(
+    id: string,
+    patch: Partial<Pick<SchoolTerm, 'name' | 'start_date' | 'end_date' | 'position' | 'is_current'>>,
+  ): Promise<SchoolTerm>
+  deleteTerm(id: string): Promise<void>
+  /** Завести готовый учебный год: год, два полугодия и пять четвертей */
+  createTermPreset(schoolId: string, yearStart: string): Promise<void>
+
+  createHoliday(schoolId: string, name: string, start: string, end: string): Promise<SchoolHoliday>
+  updateHoliday(
+    id: string,
+    patch: Partial<Pick<SchoolHoliday, 'name' | 'start_date' | 'end_date'>>,
+  ): Promise<SchoolHoliday>
+  deleteHoliday(id: string): Promise<void>
+
+  /* --- роли и привязки человека --- */
+
+  /** Задать полный набор ролей человека; основная роль остаётся первой */
+  setPersonRoles(personId: string, roles: SchoolRole[]): Promise<void>
+  /** Классы классного руководителя или завуча */
+  setPersonClasses(personId: string, classIds: string[]): Promise<void>
+  /** Дети родителя */
+  setParentChildren(parentId: string, childIds: string[]): Promise<void>
+
   /** Вход по школьному аккаунту */
   signInToSchool?(input: SchoolSignInInput): Promise<User>
 
@@ -531,6 +573,9 @@ export interface DataProvider {
      ---------------------------------------------------------------------- */
 
   /** Главный админ ли текущий пользователь */
+  /** роли текущего пользователя во всех его школах */
+  myMemberships(): Promise<MyMembership[]>
+
   isPlatformAdmin(): Promise<boolean>
   platformOverview(): Promise<PlatformOverview>
   platformSchools(): Promise<PlatformSchool[]>
@@ -572,6 +617,12 @@ export interface DataProvider {
   }): Promise<PlatformIncident>
   platformIncidents(): Promise<PlatformIncident[]>
   platformCloseIncident(id: string, closed: boolean): Promise<void>
+  /**
+   * Открыть чужое пространство правами главного админа. Возвращает его так,
+   * будто он в нём редактор — участником при этом не становится, поэтому
+   * состав курса не меняется и ученики ничего не видят.
+   */
+  platformSpace(spaceId: string): Promise<SpaceView | null>
 
   /* --- realtime --- */
   subscribe(cb: (e: ChangeEvent) => void): () => void

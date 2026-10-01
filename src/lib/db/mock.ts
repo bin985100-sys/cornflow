@@ -1,4 +1,5 @@
 import type {
+  MyMembership,
   CardColor,
   Assignment,
   AssignmentView,
@@ -51,8 +52,12 @@ import type {
   PlatformPerson,
   PlatformSchool,
   PlatformSpace,
+  PersonAccess,
   SchoolClass,
   SchoolDepartment,
+  SchoolHoliday,
+  SchoolLevel,
+  SchoolTerm,
   SchoolGroup,
   SchoolParallel,
   SchoolPerson,
@@ -136,6 +141,11 @@ interface MockDB {
   school_parallels: SchoolParallel[]
   school_classes: SchoolClass[]
   school_departments: SchoolDepartment[]
+  school_terms: SchoolTerm[]
+  school_holidays: SchoolHoliday[]
+  person_roles: Array<{ person_id: string; role: SchoolRole }>
+  person_classes: Array<{ person_id: string; class_id: string }>
+  parent_children: Array<{ parent_id: string; child_id: string }>
   school_subjects: SchoolSubject[]
   subject_classes: Array<{ subject_id: string; class_id: string }>
   subject_assessment_types: SubjectAssessmentType[]
@@ -188,6 +198,11 @@ function emptyDb(): MockDB {
     school_parallels: [],
     school_classes: [],
     school_departments: [],
+    school_terms: [],
+    school_holidays: [],
+    person_roles: [],
+    person_classes: [],
+    parent_children: [],
     school_subjects: [],
     subject_classes: [],
     subject_assessment_types: [],
@@ -369,6 +384,7 @@ export class MockProvider implements DataProvider {
       login: null,
       user_id: me.id,
       class_id: null,
+      department_id: null,
       is_active: true,
       note: null,
       created_at: nowIso(),
@@ -430,6 +446,23 @@ export class MockProvider implements DataProvider {
       people: this.db.school_people
         .filter((p) => p.school_id === schoolId)
         .sort((a, b) => a.last_name.localeCompare(b.last_name, 'ru')),
+      myRoles: this.mockMyRoles(schoolId),
+      terms: this.db.school_terms
+        .filter((t) => t.school_id === schoolId)
+        .sort((a, b) => a.position - b.position),
+      holidays: this.db.school_holidays
+        .filter((h) => h.school_id === schoolId)
+        .sort((a, b) => a.start_date.localeCompare(b.start_date)),
+      access: this.db.school_people
+        .filter((p) => p.school_id === schoolId)
+        .map((p) => ({
+          person_id: p.id,
+          roles: [
+            ...new Set([p.role, ...this.db.person_roles.filter((r) => r.person_id === p.id).map((r) => r.role)]),
+          ],
+          class_ids: this.db.person_classes.filter((c) => c.person_id === p.id).map((c) => c.class_id),
+          child_ids: this.db.parent_children.filter((c) => c.parent_id === p.id).map((c) => c.child_id),
+        })) as PersonAccess[],
       departments: this.db.school_departments
         .filter((d) => d.school_id === schoolId)
         .sort((a, b) => a.position - b.position),
@@ -500,13 +533,19 @@ export class MockProvider implements DataProvider {
     this.persist({ table: 'school' })
   }
 
-  async createClass(schoolId: string, parallelId: string, name: string): Promise<SchoolClass> {
+  async createClass(
+    schoolId: string,
+    parallelId: string,
+    name: string,
+    level?: SchoolLevel | null,
+  ): Promise<SchoolClass> {
     this.assertSchoolAdmin(schoolId)
     const row: SchoolClass = {
       id: uid('class'),
       school_id: schoolId,
       parallel_id: parallelId,
       name: name.trim(),
+      level: level ?? null,
       position: this.db.school_classes.filter((c) => c.parallel_id === parallelId).length,
       created_at: nowIso(),
     }
@@ -517,7 +556,7 @@ export class MockProvider implements DataProvider {
 
   async updateClass(
     id: string,
-    patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position'>>,
+    patch: Partial<Pick<SchoolClass, 'name' | 'parallel_id' | 'position' | 'level'>>,
   ): Promise<SchoolClass> {
     const row = this.db.school_classes.find((c) => c.id === id)
     if (!row) throw new Error('Класс не найден')
@@ -556,6 +595,7 @@ export class MockProvider implements DataProvider {
       login: i.login ?? null,
       user_id: null,
       class_id: i.class_id ?? null,
+      department_id: null,
       is_active: true,
       note: i.note ?? null,
       created_at: nowIso(),
@@ -810,6 +850,7 @@ export class MockProvider implements DataProvider {
       kind: input.kind,
       parallel_id: input.parallel_id ?? null,
       class_id: input.class_id ?? null,
+      term_id: input.term_id ?? null,
       created_at: nowIso(),
     }
     this.db.school_groups.push(group)
@@ -825,7 +866,7 @@ export class MockProvider implements DataProvider {
 
   async updateGroup(
     id: string,
-    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id'>> & {
+    patch: Partial<Pick<SchoolGroup, 'name' | 'parallel_id' | 'class_id' | 'term_id'>> & {
       member_ids?: string[]
       teacher_ids?: string[]
     },
@@ -1026,6 +1067,37 @@ export class MockProvider implements DataProvider {
   /** В локальном режиме главный админ — первый зарегистрированный аккаунт */
   private platformAdminId(): string | null {
     return this.db.platform_admins[0] ?? this.db.users[0]?.id ?? null
+  }
+
+  async myMemberships(): Promise<MyMembership[]> {
+    const uid = localStorage.getItem(SESSION_KEY)
+    if (!uid) return []
+    const list: MyMembership[] = []
+    for (const p of this.db.school_people.filter((x) => x.user_id === uid)) {
+      const school = this.db.schools.find((s) => s.id === p.school_id)
+      list.push({
+        school_id: p.school_id,
+        school_name: school?.name ?? 'Школа',
+        person_id: p.id,
+        is_owner: school?.owner_id === uid,
+        roles: [
+          ...new Set([
+            p.role,
+            ...this.db.person_roles.filter((r) => r.person_id === p.id).map((r) => r.role),
+          ]),
+        ],
+      })
+    }
+    for (const s of this.db.schools.filter((x) => x.owner_id === uid)) {
+      const found = list.find((m) => m.school_id === s.id)
+      if (found) {
+        found.is_owner = true
+        if (!found.roles.includes('admin')) found.roles.push('admin')
+      } else {
+        list.push({ school_id: s.id, school_name: s.name, person_id: null, is_owner: true, roles: ['admin'] })
+      }
+    }
+    return list
   }
 
   async isPlatformAdmin(): Promise<boolean> {
@@ -1336,6 +1408,29 @@ export class MockProvider implements DataProvider {
       }))
   }
 
+  async platformSpace(spaceId: string): Promise<SpaceView | null> {
+    const space = this.db.spaces.find((s) => s.id === spaceId)
+    if (!space) return null
+    const me = this.me()
+    return {
+      ...space,
+      permission: 'edit',
+      is_owner: space.owner_id === me.id,
+      members: this.db.space_members
+        .filter((m) => m.space_id === spaceId)
+        .map((m) => {
+          const u = this.db.users.find((x) => x.id === m.user_id)
+          return {
+            id: m.user_id,
+            name: u?.name ?? '',
+            avatar: u?.avatar ?? null,
+            role: u?.role ?? 'student',
+            permission: m.permission,
+          }
+        }),
+    } as unknown as SpaceView
+  }
+
   async platformCloseIncident(id: string, closed: boolean): Promise<void> {
     const row = this.db.platform_incidents.find((r) => r.id === id)
     if (!row) return
@@ -1346,6 +1441,212 @@ export class MockProvider implements DataProvider {
       target_type: 'incident',
       target_id: id,
     })
+    this.persist({ table: 'school' })
+  }
+
+
+  /** Все роли текущего пользователя в этой школе */
+  private mockMyRoles(schoolId: string): SchoolRole[] {
+    const school = this.db.schools.find((s) => s.id === schoolId)
+    const me = this.sessionUserId()
+    if (!me) return ['student']
+    if (school?.owner_id === me) return ['admin']
+    const person = this.db.school_people.find((p) => p.school_id === schoolId && p.user_id === me)
+    if (!person) return ['student']
+    return [
+      ...new Set([
+        person.role,
+        ...this.db.person_roles.filter((r) => r.person_id === person.id).map((r) => r.role),
+      ]),
+    ]
+  }
+
+  /* ------------------- отчётные периоды и каникулы ---------------------- */
+
+  async createTerm(input: Omit<SchoolTerm, 'id' | 'created_at'>): Promise<SchoolTerm> {
+    this.assertSchoolAdmin(input.school_id)
+    const row: SchoolTerm = { ...input, id: uid('term'), created_at: nowIso() }
+    this.db.school_terms.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updateTerm(
+    id: string,
+    patch: Partial<Pick<SchoolTerm, 'name' | 'start_date' | 'end_date' | 'position' | 'is_current'>>,
+  ): Promise<SchoolTerm> {
+    const row = this.db.school_terms.find((t) => t.id === id)
+    if (!row) throw new Error('Период не найден')
+    this.assertSchoolAdmin(row.school_id)
+    // текущий период в школе только один
+    if (patch.is_current) {
+      this.db.school_terms.forEach((t) => {
+        if (t.school_id === row.school_id) t.is_current = false
+      })
+    }
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteTerm(id: string): Promise<void> {
+    const row = this.db.school_terms.find((t) => t.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    // вместе с годом уходят вложенные полугодия и четверти
+    const doomed = new Set<string>([id])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const t of this.db.school_terms) {
+        if (t.parent_id && doomed.has(t.parent_id) && !doomed.has(t.id)) {
+          doomed.add(t.id)
+          grew = true
+        }
+      }
+    }
+    this.db.school_terms = this.db.school_terms.filter((t) => !doomed.has(t.id))
+    this.db.school_groups.forEach((g) => {
+      if (g.term_id && doomed.has(g.term_id)) g.term_id = null
+    })
+    this.persist({ table: 'school' })
+  }
+
+  async createTermPreset(schoolId: string, yearStart: string): Promise<void> {
+    this.assertSchoolAdmin(schoolId)
+    const start = new Date(yearStart)
+    const shift = (months: number, days = 0) => {
+      const d = new Date(start)
+      d.setMonth(d.getMonth() + months)
+      d.setDate(d.getDate() + days)
+      return d.toISOString().slice(0, 10)
+    }
+    const yearEnd = shift(12, -1)
+
+    const year: SchoolTerm = {
+      id: uid('term'),
+      school_id: schoolId,
+      parent_id: null,
+      kind: 'year',
+      name: `${start.getFullYear()}/${start.getFullYear() + 1}`,
+      start_date: yearStart,
+      end_date: yearEnd,
+      position: 0,
+      is_current: true,
+      created_at: nowIso(),
+    }
+    this.db.school_terms.push(year)
+
+    const half = (name: string, from: string, to: string, position: number): SchoolTerm => {
+      const row: SchoolTerm = {
+        id: uid('term'),
+        school_id: schoolId,
+        parent_id: year.id,
+        kind: 'semester',
+        name,
+        start_date: from,
+        end_date: to,
+        position,
+        is_current: false,
+        created_at: nowIso(),
+      }
+      this.db.school_terms.push(row)
+      return row
+    }
+    const h1 = half('I полугодие', yearStart, shift(4), 0)
+    const h2 = half('II полугодие', shift(4, 1), yearEnd, 1)
+
+    const quarters: Array<[string, string, string, string, number]> = [
+      [h1.id, 'I четверть', yearStart, shift(2), 0],
+      [h1.id, 'II четверть', shift(2, 1), shift(4), 1],
+      [h2.id, 'III четверть', shift(4, 1), shift(7), 2],
+      [h2.id, 'IV четверть', shift(7, 1), shift(9), 3],
+      [h2.id, 'Летний период', shift(9, 1), yearEnd, 4],
+    ]
+    for (const [parent, name, from, to, position] of quarters) {
+      this.db.school_terms.push({
+        id: uid('term'),
+        school_id: schoolId,
+        parent_id: parent,
+        kind: 'quarter',
+        name,
+        start_date: from,
+        end_date: to,
+        position,
+        is_current: false,
+        created_at: nowIso(),
+      })
+    }
+    this.persist({ table: 'school' })
+  }
+
+  async createHoliday(schoolId: string, name: string, start: string, end: string): Promise<SchoolHoliday> {
+    this.assertSchoolAdmin(schoolId)
+    const row: SchoolHoliday = {
+      id: uid('holiday'),
+      school_id: schoolId,
+      name: name.trim(),
+      start_date: start,
+      end_date: end,
+      created_at: nowIso(),
+    }
+    this.db.school_holidays.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updateHoliday(
+    id: string,
+    patch: Partial<Pick<SchoolHoliday, 'name' | 'start_date' | 'end_date'>>,
+  ): Promise<SchoolHoliday> {
+    const row = this.db.school_holidays.find((h) => h.id === id)
+    if (!row) throw new Error('Каникулы не найдены')
+    this.assertSchoolAdmin(row.school_id)
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteHoliday(id: string): Promise<void> {
+    const row = this.db.school_holidays.find((h) => h.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.school_holidays = this.db.school_holidays.filter((h) => h.id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  /* ---------------------- роли и привязки человека ---------------------- */
+
+  async setPersonRoles(personId: string, roles: SchoolRole[]): Promise<void> {
+    const person = this.db.school_people.find((p) => p.id === personId)
+    if (!person) throw new Error('Человек не найден')
+    this.assertSchoolAdmin(person.school_id)
+    const list = [...new Set(roles)]
+    this.db.person_roles = this.db.person_roles.filter((r) => r.person_id !== personId)
+    list.forEach((role) => this.db.person_roles.push({ person_id: personId, role }))
+    if (list.length) person.role = list[0]
+    this.persist({ table: 'school' })
+  }
+
+  async setPersonClasses(personId: string, classIds: string[]): Promise<void> {
+    const person = this.db.school_people.find((p) => p.id === personId)
+    if (!person) throw new Error('Человек не найден')
+    this.assertSchoolAdmin(person.school_id)
+    this.db.person_classes = this.db.person_classes.filter((c) => c.person_id !== personId)
+    ;[...new Set(classIds)].forEach((class_id) =>
+      this.db.person_classes.push({ person_id: personId, class_id }),
+    )
+    this.persist({ table: 'school' })
+  }
+
+  async setParentChildren(parentId: string, childIds: string[]): Promise<void> {
+    const person = this.db.school_people.find((p) => p.id === parentId)
+    if (!person) throw new Error('Человек не найден')
+    this.assertSchoolAdmin(person.school_id)
+    this.db.parent_children = this.db.parent_children.filter((c) => c.parent_id !== parentId)
+    ;[...new Set(childIds)]
+      .filter((id) => id !== parentId)
+      .forEach((child_id) => this.db.parent_children.push({ parent_id: parentId, child_id }))
     this.persist({ table: 'school' })
   }
 

@@ -5,7 +5,7 @@ import { useToast } from '@/context/ToastContext'
 import { ConfirmDialog } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/primitives'
 import type { SchoolApi } from '@/hooks/useSchool'
-import type { SchoolClass, SchoolParallel } from '@/lib/types'
+import type { SchoolClass, SchoolLevel, SchoolParallel } from '@/lib/types'
 
 /**
  * Параллели и классы.
@@ -70,9 +70,16 @@ export function ClassesSection({ school }: { school: SchoolApi }) {
   )
 }
 
+const LEVELS: Array<{ value: SchoolLevel; label: string; short: string }> = [
+  { value: 'primary', label: 'младшая', short: 'мл.' },
+  { value: 'middle', label: 'средняя', short: 'ср.' },
+  { value: 'senior', label: 'старшая', short: 'ст.' },
+]
+
 function ParallelCard({ parallel, school }: { parallel: SchoolParallel; school: SchoolApi }) {
   const toast = useToast()
   const [className, setClassName] = useState('')
+  const [level, setLevel] = useState<SchoolLevel | ''>('')
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(parallel.name)
   const [confirm, setConfirm] = useState(false)
@@ -81,7 +88,7 @@ function ParallelCard({ parallel, school }: { parallel: SchoolParallel; school: 
   async function addClass() {
     if (!school.schoolId || !className.trim()) return
     try {
-      await db.createClass(school.schoolId, parallel.id, className)
+      await db.createClass(school.schoolId, parallel.id, className, level || null)
       setClassName('')
       await school.refresh()
     } catch (e) {
@@ -150,6 +157,19 @@ function ParallelCard({ parallel, school }: { parallel: SchoolParallel; school: 
           onChange={(e) => setClassName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && void addClass()}
         />
+        <select
+          className="cf-input w-36"
+          value={level}
+          onChange={(e) => setLevel(e.target.value as SchoolLevel | '')}
+          title="Ступень обучения"
+        >
+          <option value="">ступень</option>
+          {LEVELS.map((l) => (
+            <option key={l.value} value={l.value}>
+              {l.label}
+            </option>
+          ))}
+        </select>
         <button className="cf-btn-ghost px-3 text-[12.5px]" disabled={!className.trim()} onClick={() => void addClass()}>
           <Plus size={14} /> Класс
         </button>
@@ -191,9 +211,17 @@ function ClassChip({
 
   return (
     <>
-      <span className="cf-pill flex items-center gap-1.5 px-2.5 py-[3px] text-[12.5px] font-semibold">
+      <span
+        className="cf-pill flex items-center gap-1.5 px-2.5 py-[3px] text-[12.5px] font-semibold"
+        title={klass.level ? `Ступень: ${LEVELS.find((l) => l.value === klass.level)?.label}` : 'Ступень не задана'}
+      >
         {parallel.name}
         {klass.name}
+        {klass.level && (
+          <span className="font-normal text-ink-3">
+            {LEVELS.find((l) => l.value === klass.level)?.short}
+          </span>
+        )}
         <span className="font-normal text-ink-3">{count}</span>
         <button className="text-ink-3 transition-colors hover:text-red-500" onClick={() => setConfirm(true)} title="Удалить класс">
           <X size={13} />

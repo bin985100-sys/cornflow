@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
-import { CloudUpload } from 'lucide-react'
+import { CloudUpload, ShieldAlert } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
 import { useCreate } from '@/context/CreateContext'
+import { Link } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 
@@ -11,7 +12,7 @@ import { Topbar } from './Topbar'
  * как секции лендинга. Плюс перетаскивание файлов в любое место окна.
  */
 export function AppLayout() {
-  const { canEdit, space, sidebarOpen, setSidebarOpen } = useApp()
+  const { canEdit, space, adminSpaceId, sidebarOpen, setSidebarOpen } = useApp()
   const create = useCreate()
   const location = useLocation()
   const [dragging, setDragging] = useState(false)
@@ -79,6 +80,22 @@ export function AppLayout() {
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden border-line bg-canvas lg:rounded-[26px] lg:border lg:shadow-card">
         <Topbar />
+
+        {/* Чужое пространство, открытое правами платформы. Полоса намеренно
+            заметная: незаметный режим правки чужих данных — плохая идея. */}
+        {adminSpaceId && space?.id === adminSpaceId && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-[#E5484D]/25 bg-[#FDECEC] px-4 py-2 text-[12.5px] text-[#8E2226]">
+            <ShieldAlert size={15} className="shrink-0" />
+            <span>
+              <b>Чужое пространство.</b> Открыто правами главного администратора — вы не
+              участник курса. Любая правка попадёт в журнал платформы вместе со старым значением.
+            </span>
+            <Link to="/platform/spaces" className="ml-auto font-semibold underline">
+              В панель платформы
+            </Link>
+          </div>
+        )}
+
         <main ref={scrollRef} className="flex-1 overflow-y-auto">
           {/* ключ по маршруту — каждый раздел появляется с мягким переходом */}
           <div key={location.pathname} className="animate-page">

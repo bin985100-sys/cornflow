@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import { KeyRound, Plus, Search, Trash2, UserPlus, Users } from 'lucide-react'
+import { ShieldCheck, KeyRound, Plus, Search, Trash2, UserPlus, Users } from 'lucide-react'
 import { db } from '@/lib/db'
 import { useToast } from '@/context/ToastContext'
 import { ConfirmDialog, Modal } from '@/components/ui/Modal'
+import { RolesModal } from './RolesModal'
 import { EmptyState } from '@/components/ui/primitives'
 import { cx, download, generatePassword, loginFromName, normalizeLogin } from '@/lib/utils'
 import type { SchoolApi } from '@/hooks/useSchool'
@@ -27,6 +28,7 @@ export function PeopleSection({ school, role }: { school: SchoolApi; role: Schoo
   const [bulk, setBulk] = useState(false)
   const [issuing, setIssuing] = useState<SchoolPerson[] | null>(null)
   const [confirm, setConfirm] = useState<SchoolPerson | null>(null)
+  const [roles, setRoles] = useState<SchoolPerson | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -119,6 +121,7 @@ export function PeopleSection({ school, role }: { school: SchoolApi; role: Schoo
                     school={school}
                     role={role}
                     onIssue={() => setIssuing([person])}
+                    onRoles={() => setRoles(person)}
                     onDelete={() => setConfirm(person)}
                   />
                 ))}
@@ -139,6 +142,8 @@ export function PeopleSection({ school, role }: { school: SchoolApi; role: Schoo
       {adding && <PersonModal school={school} role={role} onClose={() => setAdding(false)} />}
       {bulk && <BulkModal school={school} role={role} onClose={() => setBulk(false)} />}
       {issuing && <IssueModal school={school} people={issuing} onClose={() => setIssuing(null)} />}
+
+      {roles && <RolesModal person={roles} school={school} onClose={() => setRoles(null)} />}
 
       <ConfirmDialog
         open={Boolean(confirm)}
@@ -168,12 +173,14 @@ function PersonRow({
   school,
   role,
   onIssue,
+  onRoles,
   onDelete,
 }: {
   person: SchoolPerson
   school: SchoolApi
   role: SchoolRole
   onIssue: () => void
+  onRoles: () => void
   onDelete: () => void
 }) {
   const toast = useToast()
@@ -224,6 +231,9 @@ function PersonRow({
       {school.isAdmin && (
         <td className="px-4 py-2">
           <div className="flex items-center justify-end gap-1">
+            <button className="cf-icon-btn" onClick={onRoles} title="Роли и привязки">
+              <ShieldCheck size={15} />
+            </button>
             <button className="cf-icon-btn" onClick={onIssue} title={person.user_id ? 'Сменить пароль' : 'Выдать аккаунт'}>
               <KeyRound size={15} />
             </button>
@@ -253,6 +263,7 @@ function PersonModal({
   const [first, setFirst] = useState('')
   const [middle, setMiddle] = useState('')
   const [classId, setClassId] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
   const [busy, setBusy] = useState(false)
 
   async function save() {
@@ -267,6 +278,11 @@ function PersonModal({
         middle_name: middle || null,
         class_id: role === 'student' ? classId || null : null,
         login: normalizeLogin(loginFromName(last, first)) || null,
+      }).then(async (created) => {
+        // МО проставляем отдельным шагом: createPerson его не принимает
+        if (role === 'teacher' && departmentId) {
+          await db.updatePerson(created.id, { department_id: departmentId })
+        }
       })
       await school.refresh()
       onClose()
@@ -289,6 +305,22 @@ function PersonModal({
         <Field label="Отчество">
           <input className="cf-input w-full" value={middle} onChange={(e) => setMiddle(e.target.value)} />
         </Field>
+        {role === 'teacher' && school.departments.length > 0 && (
+          <Field label="МО">
+            <select
+              className="cf-input w-full"
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+            >
+              <option value="">без МО</option>
+              {school.departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         {role === 'student' && (
           <Field label="Класс">
             <select className="cf-input w-full" value={classId} onChange={(e) => setClassId(e.target.value)}>
