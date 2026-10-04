@@ -9,6 +9,7 @@ import {
   Video,
 } from 'lucide-react'
 import type { AssignmentView } from '@/lib/types'
+import { STATE_HINT, STATE_LABEL, STATE_TONE, submissionState } from '@/lib/submissions'
 import { cardPalette, cx, dueLabel, excerpt, formatDate, formatTime, stripHtml } from '@/lib/utils'
 import { EventChip } from '@/components/ui/primitives'
 
@@ -31,7 +32,10 @@ export function AssignmentCard({
   const due = dueLabel(assignment.due_date)
   const palette = cardPalette[due.tone === 'late' ? 'red' : due.tone === 'soon' ? 'yellow' : 'blue']
   const submitted = assignment.submissions.filter((s) => s.status !== 'assigned').length
-  const done = Boolean(assignment.mySubmission && assignment.mySubmission.status !== 'assigned')
+  // четыре состояния вместо «сдано / не сдано»: просрочку видно сразу
+  const myState = assignment.mySubmission
+    ? submissionState(assignment.mySubmission, assignment.due_date)
+    : null
 
   return (
     <article
@@ -47,12 +51,16 @@ export function AssignmentCard({
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start justify-between gap-2">
           <h3 className="line-clamp-2 text-[15px] font-semibold leading-snug text-ink">{assignment.title}</h3>
-          {!isTeacher && done && (
+          {!isTeacher && myState && myState !== 'assigned' && (
             <span
-              className="flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-[10.5px] font-semibold"
-              style={{ background: 'var(--cf-green-bg)', color: 'var(--cf-green-acc)' }}
+              className={cx(
+                'cf-pill flex shrink-0 items-center gap-1 px-2 py-0.5 text-[10.5px] font-semibold',
+                STATE_TONE[myState],
+              )}
+              title={STATE_HINT[myState]}
             >
-              <CheckCircle2 size={11} /> Сдано
+              {myState === 'graded' && <CheckCircle2 size={11} />}
+              {STATE_LABEL[myState]}
             </span>
           )}
         </div>

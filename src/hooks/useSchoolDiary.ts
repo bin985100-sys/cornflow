@@ -147,9 +147,10 @@ export function useSchoolDiary(): SchoolDiaryApi {
           aggregate,
           attendance: attendanceStats(snap.attendance.filter((a) => a.student_id === user.id)),
           grades,
+          // срок сдачи важнее даты занятия: домашка живёт до дедлайна
           homework: snap.lessons
-            .filter((l) => l.homework && l.date >= today)
-            .sort((a, b) => a.date.localeCompare(b.date)),
+            .filter((l) => Boolean(l.homework) && (l.homework_due ?? l.date) >= today)
+            .sort((a, b) => (a.homework_due ?? a.date).localeCompare(b.homework_due ?? b.date)),
           pending: items.filter(
             (item) => !snap.grades.some((g) => g.item_id === item.id && g.student_id === user.id),
           ),

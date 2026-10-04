@@ -2,6 +2,7 @@ import { ClassesSection } from '@/components/school/ClassesSection'
 import { DepartmentsSection } from '@/components/school/DepartmentsSection'
 import { GroupsSection } from '@/components/school/GroupsSection'
 import { PeopleSection } from '@/components/school/PeopleSection'
+import { LessonKindsSection } from '@/components/school/LessonKindsSection'
 import { SubjectsSection } from '@/components/school/SubjectsSection'
 import { TermsSection } from '@/components/school/TermsSection'
 import { TeachingSection } from '@/components/school/TeachingSection'
@@ -71,6 +72,7 @@ export function AdminSubjectsPage() {
   return (
     <Page title="Предметы" subtitle="МО, название, классы где предмет можно проводить, и типы оценивания для журнала.">
       <SubjectsSection school={useSchoolCtx()} />
+      <LessonKindsSection school={useSchoolCtx()} />
     </Page>
   )
 }

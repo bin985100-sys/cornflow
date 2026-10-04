@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { ArrowRight, BookOpen, Check, Plus, Trash2, UserCog } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowRight, BookMarked, BookOpen, Check, Plus, Trash2, UserCog } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { db } from '@/lib/db'
 import { useToast } from '@/context/ToastContext'
@@ -7,7 +7,7 @@ import { ConfirmDialog, Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/primitives'
 import { cx } from '@/lib/utils'
 import type { SchoolApi } from '@/hooks/useSchool'
-import type { GroupView, SchoolPerson, TeachingAssignment } from '@/lib/types'
+import type { CurriculumView, GroupView, SchoolPerson, TeachingAssignment } from '@/lib/types'
 
 /**
  * Курс: предмет × группа × учителя. При назначении создаётся
@@ -18,6 +18,19 @@ import type { GroupView, SchoolPerson, TeachingAssignment } from '@/lib/types'
  */
 export function TeachingSection({ school }: { school: SchoolApi }) {
   const [creating, setCreating] = useState(false)
+  // планы грузим один раз на всю страницу: в снимок школы они не входят
+  const [plans, setPlans] = useState<CurriculumView[]>([])
+
+  useEffect(() => {
+    if (!school.schoolId) return
+    let alive = true
+    db.listCurricula(school.schoolId)
+      .then((list) => alive && setPlans(list))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [school.schoolId])
 
   return (
     <section className="space-y-4">
@@ -42,7 +55,7 @@ export function TeachingSection({ school }: { school: SchoolApi }) {
       ) : (
         <div className="space-y-2">
           {school.assignments.map((a) => (
-            <AssignmentRow key={a.id} assignment={a} school={school} />
+            <AssignmentRow key={a.id} assignment={a} school={school} plans={plans} />
           ))}
         </div>
       )}
@@ -52,7 +65,15 @@ export function TeachingSection({ school }: { school: SchoolApi }) {
   )
 }
 
-function AssignmentRow({ assignment, school }: { assignment: TeachingAssignment; school: SchoolApi }) {
+function AssignmentRow({
+  assignment,
+  school,
+  plans,
+}: {
+  assignment: TeachingAssignment
+  school: SchoolApi
+  plans: CurriculumView[]
+}) {
   const toast = useToast()
   const [confirm, setConfirm] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -110,6 +131,34 @@ function AssignmentRow({ assignment, school }: { assignment: TeachingAssignment;
             </span>
           ))
         )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2 pl-6">
+        <BookMarked size={13} className="shrink-0 text-ink-3" />
+        <span className="text-[12.5px] text-ink-3">КТП</span>
+        <select
+          className="cf-input h-8 min-w-[200px] max-w-full py-0 text-[12.5px]"
+          value={assignment.curriculum_id ?? ''}
+          disabled={!school.isAdmin}
+          onChange={async (e) => {
+            try {
+              await db.setAssignmentCurriculum(assignment.id, e.target.value || null)
+              await school.refresh()
+            } catch (err) {
+              toast.error(err)
+            }
+          }}
+        >
+          <option value="">не выбран — заведётся сам</option>
+          {plans
+            .filter((p) => !p.subject_id || p.subject_id === assignment.subject_id)
+            .map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.is_auto ? ' (авто)' : ''}
+              </option>
+            ))}
+        </select>
       </div>
 
       {editing && (

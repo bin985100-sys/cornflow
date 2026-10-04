@@ -5,7 +5,8 @@ import { useToast } from '@/context/ToastContext'
 import { ConfirmDialog } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/primitives'
 import type { SchoolApi } from '@/hooks/useSchool'
-import type { SchoolClass, SchoolLevel, SchoolParallel } from '@/lib/types'
+import type {
+  SchoolLevel, SchoolClass, SchoolParallel } from '@/lib/types'
 
 /**
  * Параллели и классы.
@@ -161,7 +162,7 @@ function ParallelCard({ parallel, school }: { parallel: SchoolParallel; school: 
           className="cf-input w-36"
           value={level}
           onChange={(e) => setLevel(e.target.value as SchoolLevel | '')}
-          title="Ступень обучения"
+          title="Ступень: по ней завуч отбирает классы"
         >
           <option value="">ступень</option>
           {LEVELS.map((l) => (
@@ -213,7 +214,11 @@ function ClassChip({
     <>
       <span
         className="cf-pill flex items-center gap-1.5 px-2.5 py-[3px] text-[12.5px] font-semibold"
-        title={klass.level ? `Ступень: ${LEVELS.find((l) => l.value === klass.level)?.label}` : 'Ступень не задана'}
+        title={
+          klass.level
+            ? `Ступень: ${LEVELS.find((l) => l.value === klass.level)?.label}`
+            : 'Ступень не задана'
+        }
       >
         {parallel.name}
         {klass.name}

@@ -117,7 +117,17 @@ export interface Assignment {
   created_at: string
 }
 
-export type SubmissionStatus = 'assigned' | 'submitted' | 'graded'
+/**
+ * Состояние сдачи.
+ *
+ * «Просрочен» здесь нет намеренно: это дедлайн плюс отсутствие сдачи, и если
+ * хранить его колонкой, он протухнет в первую же ночь. Считается на лету —
+ * см. submissionState().
+ */
+export type SubmissionStatus = 'assigned' | 'submitted' | 'returned' | 'graded'
+
+/** То, что видит человек: четыре состояния плюс возврат на доработку */
+export type SubmissionState = 'assigned' | 'overdue' | 'submitted' | 'returned' | 'graded'
 
 export interface Submission {
   id: string
@@ -131,6 +141,54 @@ export interface Submission {
   submitted_at: string | null
   /** работа сдана после дедлайна */
   is_late: boolean
+  /** что сказал учитель, когда вернул или закрыл работу */
+  teacher_comment: string | null
+  reviewed_at: string | null
+  /** работа журнала, в которую ушла оценка */
+  grade_item_id: string | null
+  /** сколько раз работу возвращали на доработку */
+  revision_count: number
+}
+
+/** Сообщение в переписке по конкретной сдаче */
+export interface SubmissionMessage {
+  id: string
+  submission_id: string
+  author_id: string
+  body: string
+  attachments: string[]
+  created_at: string
+}
+
+/** Сдача вместе с тем, что нужно для экрана проверки */
+export interface SubmissionReview extends Submission {
+  assignment_title: string
+  assignment_due: string | null
+  space_id: string
+  space_name: string
+  student_name: string
+  student_avatar: string | null
+  state: SubmissionState
+}
+
+export type NotificationKind =
+  | 'submission_new'
+  | 'submission_returned'
+  | 'submission_graded'
+  | 'message'
+  | 'grade'
+  | 'request'
+
+export interface AppNotification {
+  id: string
+  user_id: string
+  kind: NotificationKind
+  title: string
+  body: string | null
+  link: string | null
+  space_id: string | null
+  read_at: string | null
+  created_at: string
 }
 
 /** Комментарий под материалом или заданием */
@@ -426,6 +484,14 @@ export interface Lesson {
   duration_min: number | null
   /** Домашнее задание текстом */
   homework: string | null
+  /** Срок сдачи домашнего задания */
+  homework_due: string | null
+  /** Теория урока: то, что объясняется */
+  theory: string | null
+  /** Задание на урок (не домашнее) */
+  task: string | null
+  /** Плановый урок КТП, из которого этот создан */
+  curriculum_lesson_id: string | null
   /** Заметка учителя по занятию */
   notes: string | null
   position: number
@@ -553,20 +619,14 @@ export interface GradebookSnapshot {
    Школа — уровень над пространствами (миграция 0011_school.sql)
    ========================================================================= */
 
-export type SchoolRole =
-  | 'admin'
-  | 'teacher'
-  | 'student'
-  | 'parent'
-  | 'homeroom'
-  | 'headteacher'
+export type SchoolRole = 'admin' | 'teacher' | 'student' | 'parent' | 'homeroom' | 'headteacher'
+export type GroupKind = 'class' | 'mixed'
 
-/** Ступень обучения, к которой относится класс */
+/** Ступень класса: по ней завуч отбирает классы, а расписание — звонки */
 export type SchoolLevel = 'primary' | 'middle' | 'senior'
 
-/** Вид отчётного периода: год, в нём полугодия, в них четверти */
+/** Вид отчётного периода школы */
 export type TermKind = 'year' | 'semester' | 'quarter'
-export type GroupKind = 'class' | 'mixed'
 
 export interface School {
   id: string
@@ -590,7 +650,7 @@ export interface SchoolPerson {
   /** привязанный аккаунт; пусто — человек есть в списке, но войти не может */
   user_id: string | null
   class_id: string | null
-  /** МО, к которому относится учитель */
+  /** МО, к которому относится учитель; у учеников пусто */
   department_id: string | null
   is_active: boolean
   note: string | null
@@ -612,20 +672,21 @@ export interface SchoolClass {
   school_id: string
   parallel_id: string
   name: string
-  /** младшая, средняя или старшая школа; пусто — не задано */
+  /** младшая, средняя или старшая школа; пусто — ступень не задана */
   level: SchoolLevel | null
   position: number
   created_at: string
 }
 
 /**
- * Отчётный период школы. Год лежит верхним уровнем, в нём полугодия,
- * в полугодиях четверти. Журнальные периоды курса (grade_periods) живут
- * отдельно и остаются как были — это общий календарь школы.
+ * Отчётный период школы: учебный год, внутри него полугодия, внутри них
+ * четверти. Это не то же самое, что периоды журнала внутри курса — те
+ * остаются как были. По этим считаются своды оценок и режется расписание.
  */
 export interface SchoolTerm {
   id: string
   school_id: string
+  /** год верхнего уровня; у четверти и полугодия родитель обязателен */
   parent_id: string | null
   kind: TermKind
   name: string
@@ -636,7 +697,7 @@ export interface SchoolTerm {
   created_at: string
 }
 
-/** Каникулы: дни, в которые уроков нет */
+/** Каникулы: дни, которые вырезаются из расписания у всех */
 export interface SchoolHoliday {
   id: string
   school_id: string
@@ -644,6 +705,99 @@ export interface SchoolHoliday {
   start_date: string
   end_date: string
   created_at: string
+}
+
+/** Все роли человека и то, что к ним привязано */
+export interface PersonAccess {
+  person_id: string
+  /** все роли: основная плюс добавленные */
+  roles: SchoolRole[]
+  /** классы классного руководителя или завуча */
+  class_ids: string[]
+  /** дети, если это родитель */
+  child_ids: string[]
+}
+
+/**
+ * Роли текущего пользователя в одной школе — дешёвый запрос для приложения.
+ *
+ * Весь справочник (SchoolSnapshot) грузится только в админ-панели, а
+ * приложению нужно лишь знать, какие интерфейсы доступны человеку.
+ */
+export interface MyMembership {
+  school_id: string
+  school_name: string
+  /** строка в school_people; у владельца школы её может не быть */
+  person_id: string | null
+  is_owner: boolean
+  roles: SchoolRole[]
+}
+
+/* ---------------------------- КТП и уроки -------------------------------- */
+
+/**
+ * Тип урока: «Лекция», «Практикум», «Контрольная». Справочник школы, а не
+ * зашитый список — каждая школа называет по-своему.
+ */
+export interface LessonKind {
+  id: string
+  school_id: string
+  name: string
+  color: CardColor
+  /** идёт ли урок в счёт часов по теме */
+  counts_hours: boolean
+  position: number
+  created_at: string
+}
+
+/** Календарно-тематический план. Своё у каждого учителя. */
+export interface Curriculum {
+  id: string
+  school_id: string
+  subject_id: string | null
+  /** учитель-владелец (school_people.id) */
+  owner_id: string | null
+  name: string
+  description: string | null
+  /** заведено автоматически под курс, у которого плана не было */
+  is_auto: boolean
+  /** откуда скопировано, если брали чужое за основу */
+  source_id: string | null
+  created_at: string
+}
+
+export interface CurriculumTopic {
+  id: string
+  curriculum_id: string
+  name: string
+  /** планируемое число часов; факт считается по урокам */
+  hours: number | null
+  position: number
+  created_at: string
+}
+
+export interface CurriculumLesson {
+  id: string
+  curriculum_id: string
+  /** урок вне тем допустим: не каждый план разложен по темам */
+  topic_id: string | null
+  kind_id: string | null
+  title: string
+  /** то, что объясняется на уроке */
+  theory: string | null
+  /** то, что делают на уроке */
+  task: string | null
+  position: number
+  created_at: string
+}
+
+/** План целиком: темы с уроками внутри */
+export interface CurriculumView extends Curriculum {
+  topics: Array<CurriculumTopic & { lessons: CurriculumLesson[] }>
+  /** уроки, не разложенные по темам */
+  loose: CurriculumLesson[]
+  /** курсы, к которым этот план прикреплён */
+  assignment_ids: string[]
 }
 
 /**
@@ -698,6 +852,8 @@ export interface SchoolGroup {
 
 export interface TeachingAssignment {
   id: string
+  /** КТП курса; если не выбран — заводится автоматически */
+  curriculum_id: string | null
   school_id: string
   subject_id: string
   group_id: string
@@ -722,38 +878,16 @@ export interface GroupView extends SchoolGroup {
   teacher_ids: string[]
 }
 
-/** Человек со всеми ролями и привязками */
-export interface PersonAccess {
-  person_id: string
-  /** все роли: основная плюс добавленные */
-  roles: SchoolRole[]
-  /** классы классного руководителя или завуча */
-  class_ids: string[]
-  /** дети, если это родитель */
-  child_ids: string[]
-}
-
-/**
- * Роли текущего пользователя в одной школе — дешёвый запрос для приложения.
- *
- * Весь справочник (SchoolSnapshot) грузится только в админ-панели, а
- * приложению нужно лишь знать, какие интерфейсы доступны человеку.
- */
-export interface MyMembership {
-  school_id: string
-  school_name: string
-  /** строка в school_people; у владельца школы её может не быть */
-  person_id: string | null
-  is_owner: boolean
-  roles: SchoolRole[]
-}
-
 /** Весь справочник школы за один запрос */
 export interface SchoolSnapshot {
   school: School
   role: SchoolRole
   /** все роли текущего пользователя в этой школе */
   myRoles: SchoolRole[]
+  terms: SchoolTerm[]
+  holidays: SchoolHoliday[]
+  lessonKinds: LessonKind[]
+  access: PersonAccess[]
   parallels: SchoolParallel[]
   classes: SchoolClass[]
   people: SchoolPerson[]
@@ -761,9 +895,6 @@ export interface SchoolSnapshot {
   subjects: SubjectView[]
   groups: GroupView[]
   assignments: TeachingAssignment[]
-  terms: SchoolTerm[]
-  holidays: SchoolHoliday[]
-  access: PersonAccess[]
 }
 
 /** Результат заведения аккаунтов серверной функцией */

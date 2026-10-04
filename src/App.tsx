@@ -12,7 +12,9 @@ import { AssignmentsPage } from '@/pages/AssignmentsPage'
 import { AuthPage } from '@/pages/AuthPage'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { DashboardPage } from '@/pages/DashboardPage'
+import { CurriculumPage } from '@/pages/CurriculumPage'
 import { DiaryPage } from '@/pages/DiaryPage'
+import { ReviewPage } from '@/pages/ReviewPage'
 import { JoinPage } from '@/pages/JoinPage'
 import { GradebookPage } from '@/pages/GradebookPage'
 import { LandingPage } from '@/pages/LandingPage'
@@ -146,6 +148,10 @@ function Shell() {
         <Route path="diary" element={<DiaryPage />} />
         {/* учитель: все его группы, разложенные по предметам */}
         <Route path="teaching" element={<TeachingPage />} />
+        {/* календарно-тематическое планирование */}
+        <Route path="curriculum" element={<CurriculumPage />} />
+        {/* проверка сданных работ по всем курсам */}
+        <Route path="review" element={<ReviewPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="starred" element={<StarredPage />} />

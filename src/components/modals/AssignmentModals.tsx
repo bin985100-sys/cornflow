@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Check, GraduationCap, Loader2, Paperclip, Send, Trash2 } from 'lucide-react'
 import { db } from '@/lib/db'
+import { STATE_HINT, STATE_LABEL, STATE_TONE, submissionState } from '@/lib/submissions'
+import { SubmissionChat } from '@/pages/ReviewPage'
 import type { AssignmentView, MaterialView } from '@/lib/types'
 import { MATERIAL_ICON } from '@/lib/icons'
 import { cardPalette, cx, formatDateFull, toDateInput } from '@/lib/utils'
@@ -372,9 +374,11 @@ export function AssignmentDetail({
               {busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
               {closed
                 ? 'Приём закрыт'
-                : mine?.status === 'submitted'
-                  ? 'Обновить работу'
-                  : 'Сдать работу'}
+                : mine?.status === 'returned'
+                  ? 'Сдать переделанное'
+                  : mine?.status === 'submitted'
+                    ? 'Обновить работу'
+                    : 'Сдать работу'}
             </button>
           )}
         </>
@@ -382,6 +386,36 @@ export function AssignmentDetail({
     >
       <div className="space-y-6">
         <AssignmentChips assignment={assignment} />
+
+        {mine && (
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={cx(
+                  'cf-pill px-2.5 py-[3px] text-[12px] font-semibold',
+                  STATE_TONE[submissionState(mine, assignment.due_date)],
+                )}
+              >
+                {STATE_LABEL[submissionState(mine, assignment.due_date)]}
+              </span>
+              <span className="text-[12px] text-ink-3">
+                {STATE_HINT[submissionState(mine, assignment.due_date)]}
+              </span>
+              {mine.grade != null && (
+                <span className="ml-auto text-[13px] font-semibold">Оценка: {mine.grade}</span>
+              )}
+            </div>
+
+            {mine.teacher_comment && (
+              <p className="rounded-[14px] bg-canvas px-3 py-2 text-[13px] text-ink-2">
+                <b className="font-semibold text-ink">Учитель написал. </b>
+                {mine.teacher_comment}
+              </p>
+            )}
+
+            <SubmissionChat submissionId={mine.id} />
+          </section>
+        )}
 
         {assignment.description && (
           <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-ink-2">{assignment.description}</p>

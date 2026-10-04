@@ -240,7 +240,9 @@ function Homework({
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-medium">{subject.space.name}</span>
               <span className="block text-[12.5px] text-ink-2">{lesson.homework}</span>
-              {lesson.title && <span className="block text-[11.5px] text-ink-3">{lesson.title}</span>}
+              <span className="block text-[11.5px] text-ink-3">
+                {lesson.homework_due ? `Сдать до ${formatDate(lesson.homework_due)}` : lesson.title}
+              </span>
             </span>
           </button>
         ))}

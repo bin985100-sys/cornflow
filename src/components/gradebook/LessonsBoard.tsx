@@ -16,7 +16,7 @@ import { Menu } from '@/components/ui/Menu'
 import { ConfirmDialog } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/primitives'
 import { gradePalette, itemAverage, trimNumber } from '@/lib/grading'
-import { cx, formatDate } from '@/lib/utils'
+import { cx, formatDate, plural } from '@/lib/utils'
 import type { GradeItem, Lesson } from '@/lib/types'
 import type { GradebookApi } from '@/hooks/useGradebook'
 import { LessonModal } from './LessonModal'
@@ -87,7 +87,8 @@ export function LessonsBoard({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[13px] text-ink-3">
-          {gb.periodLessons.length} занятий{gb.period ? ` · ${gb.period.name}` : ''}
+          {plural(gb.periodLessons.length, 'занятие', 'занятия', 'занятий')}
+          {gb.period ? ` · ${gb.period.name}` : ''}
         </p>
         {canEdit && (
           <button className="cf-btn-brand" onClick={() => setModal({ open: true, lesson: null })}>
@@ -233,10 +234,29 @@ export function LessonsBoard({
                       )}
                     </div>
 
-                    {lesson.homework && (
+                    {lesson.theory && (
                       <p className="mt-3 rounded-[14px] bg-canvas px-3 py-2 text-[13px] text-ink-2">
+                        <b className="font-semibold text-ink">Теория. </b>
+                        {lesson.theory}
+                      </p>
+                    )}
+
+                    {lesson.task && (
+                      <p className="mt-2 rounded-[14px] bg-canvas px-3 py-2 text-[13px] text-ink-2">
+                        <b className="font-semibold text-ink">Задание на занятии. </b>
+                        {lesson.task}
+                      </p>
+                    )}
+
+                    {lesson.homework && (
+                      <p className="mt-2 rounded-[14px] bg-canvas px-3 py-2 text-[13px] text-ink-2">
                         <b className="font-semibold text-ink">Домашнее задание. </b>
                         {lesson.homework}
+                        {lesson.homework_due && (
+                          <span className="ml-1 text-ink-3">
+                            · сдать до {formatDate(lesson.homework_due)}
+                          </span>
+                        )}
                       </p>
                     )}
 

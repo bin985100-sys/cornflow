@@ -1,5 +1,17 @@
 import type {
+  SchoolLevel,
+  TermKind,
+  SchoolTerm,
+  SchoolHoliday,
   MyMembership,
+  LessonKind,
+  Curriculum,
+  CurriculumTopic,
+  CurriculumLesson,
+  CurriculumView,
+  SubmissionReview,
+  SubmissionMessage,
+  AppNotification,
   Assignment,
   AssignmentView,
   Attendance,
@@ -55,9 +67,6 @@ import type {
   PlatformSpace,
   SchoolClass,
   SchoolDepartment,
-  SchoolHoliday,
-  SchoolLevel,
-  SchoolTerm,
   SchoolGroup,
   SchoolParallel,
   SchoolPerson,
@@ -117,11 +126,11 @@ export interface CreateGroupInput {
   kind: GroupKind
   parallel_id?: string | null
   class_id?: string | null
-  /** отчётный период, к которому относится группа */
-  term_id?: string | null
   member_ids?: string[]
   /** учителя, ведущие группу; их может быть несколько */
   teacher_ids?: string[]
+  /** отчётный период группы */
+  term_id?: string | null
 }
 
 export interface CreateSpaceInput {
@@ -214,6 +223,10 @@ export interface CreateLessonInput {
   starts_at?: string | null
   duration_min?: number | null
   homework?: string | null
+  homework_due?: string | null
+  theory?: string | null
+  task?: string | null
+  curriculum_lesson_id?: string | null
   notes?: string | null
 }
 
@@ -338,6 +351,36 @@ export interface DataProvider {
     payload: { comment?: string | null; attachments?: string[] },
   ): Promise<Submission>
   gradeSubmission(submissionId: string, grade: number | null): Promise<Submission>
+
+  /* --- проверка работ --- */
+
+  /**
+   * Все сдачи, которые ждут учителя: по всем его пространствам сразу.
+   * `spaceId` сужает до одного курса.
+   */
+  listReviewQueue(spaceId?: string | null): Promise<SubmissionReview[]>
+  /**
+   * Закрыть работу: оценка уходит в журнал, если передан `grade_item_id`.
+   * Ученик получает оповещение.
+   */
+  reviewSubmission(
+    submissionId: string,
+    input: { grade?: number | null; comment?: string | null; grade_item_id?: string | null },
+  ): Promise<Submission>
+  /** Вернуть работу на доработку с пояснением, что не так */
+  returnSubmission(submissionId: string, comment: string): Promise<Submission>
+
+  /* --- переписка по работе --- */
+  listSubmissionMessages(submissionId: string): Promise<SubmissionMessage[]>
+  sendSubmissionMessage(
+    submissionId: string,
+    body: string,
+    attachments?: string[],
+  ): Promise<SubmissionMessage>
+
+  /* --- оповещения --- */
+  listNotifications(limit?: number): Promise<AppNotification[]>
+  markNotificationsRead(ids?: string[]): Promise<void>
 
   /* --- личные задачи --- */
   listTasks(): Promise<Task[]>
@@ -536,32 +579,100 @@ export interface DataProvider {
   updateTeaching(id: string, patch: { teacher_ids: string[] }): Promise<TeachingAssignment>
   deleteTeaching(id: string): Promise<void>
 
-  /* --- отчётные периоды и каникулы --- */
+  /* ------------------------- периоды и каникулы ------------------------ */
 
-  createTerm(input: Omit<SchoolTerm, 'id' | 'created_at'>): Promise<SchoolTerm>
+  createTerm(input: {
+    school_id: string
+    parent_id?: string | null
+    kind: TermKind
+    name: string
+    start_date: string
+    end_date: string
+  }): Promise<SchoolTerm>
   updateTerm(
     id: string,
     patch: Partial<Pick<SchoolTerm, 'name' | 'start_date' | 'end_date' | 'position' | 'is_current'>>,
   ): Promise<SchoolTerm>
   deleteTerm(id: string): Promise<void>
-  /** Завести готовый учебный год: год, два полугодия и пять четвертей */
+  /** Готовый учебный год: два полугодия и пять четвертей вместе с летней */
   createTermPreset(schoolId: string, yearStart: string): Promise<void>
 
-  createHoliday(schoolId: string, name: string, start: string, end: string): Promise<SchoolHoliday>
+  createHoliday(input: {
+    school_id: string
+    name: string
+    start_date: string
+    end_date: string
+  }): Promise<SchoolHoliday>
   updateHoliday(
     id: string,
     patch: Partial<Pick<SchoolHoliday, 'name' | 'start_date' | 'end_date'>>,
   ): Promise<SchoolHoliday>
   deleteHoliday(id: string): Promise<void>
 
-  /* --- роли и привязки человека --- */
+  /* ------------------------------- роли -------------------------------- */
 
-  /** Задать полный набор ролей человека; основная роль остаётся первой */
+  /** роли человека в школе; первая считается основной */
   setPersonRoles(personId: string, roles: SchoolRole[]): Promise<void>
   /** Классы классного руководителя или завуча */
   setPersonClasses(personId: string, classIds: string[]): Promise<void>
   /** Дети родителя */
   setParentChildren(parentId: string, childIds: string[]): Promise<void>
+  /** роли текущего пользователя во всех его школах */
+  myMemberships(): Promise<MyMembership[]>
+
+  /* ---------------------------- КТП и уроки ---------------------------- */
+
+  /** Типы уроков школы */
+  createLessonKind(schoolId: string, name: string, color?: CardColor): Promise<LessonKind>
+  updateLessonKind(id: string, patch: Partial<Omit<LessonKind, 'id' | 'school_id'>>): Promise<LessonKind>
+  deleteLessonKind(id: string): Promise<void>
+
+  /** Все планы школы с темами и уроками */
+  listCurricula(schoolId: string, subjectId?: string | null): Promise<CurriculumView[]>
+  createCurriculum(input: {
+    school_id: string
+    subject_id?: string | null
+    owner_id?: string | null
+    name: string
+    description?: string | null
+  }): Promise<Curriculum>
+  updateCurriculum(
+    id: string,
+    patch: Partial<Pick<Curriculum, 'name' | 'description' | 'subject_id' | 'owner_id'>>,
+  ): Promise<Curriculum>
+  deleteCurriculum(id: string): Promise<void>
+  /** Копия чужого плана: правки не уедут у автора оригинала */
+  copyCurriculum(sourceId: string, ownerId: string | null, name?: string): Promise<string>
+  /** Прикрепить план к курсу (группа + предмет) */
+  setAssignmentCurriculum(assignmentId: string, curriculumId: string | null): Promise<void>
+
+  createTopic(curriculumId: string, name: string, hours?: number | null): Promise<CurriculumTopic>
+  updateTopic(
+    id: string,
+    patch: Partial<Pick<CurriculumTopic, 'name' | 'hours' | 'position'>>,
+  ): Promise<CurriculumTopic>
+  deleteTopic(id: string): Promise<void>
+
+  createPlanLesson(input: {
+    curriculum_id: string
+    topic_id?: string | null
+    kind_id?: string | null
+    title: string
+    theory?: string | null
+    task?: string | null
+  }): Promise<CurriculumLesson>
+  updatePlanLesson(
+    id: string,
+    patch: Partial<Pick<CurriculumLesson, 'title' | 'theory' | 'task' | 'kind_id' | 'topic_id' | 'position'>>,
+  ): Promise<CurriculumLesson>
+  deletePlanLesson(id: string): Promise<void>
+
+  /**
+   * Положить состоявшийся урок в КТП курса. Если плана у курса не было, он
+   * заводится автоматически — чтобы учителю не пришлось начинать с настройки.
+   * Для пространства вне школы ничего не делает.
+   */
+  attachLessonToPlan(lessonId: string): Promise<void>
 
   /** Вход по школьному аккаунту */
   signInToSchool?(input: SchoolSignInInput): Promise<User>
@@ -573,9 +684,6 @@ export interface DataProvider {
      ---------------------------------------------------------------------- */
 
   /** Главный админ ли текущий пользователь */
-  /** роли текущего пользователя во всех его школах */
-  myMemberships(): Promise<MyMembership[]>
-
   isPlatformAdmin(): Promise<boolean>
   platformOverview(): Promise<PlatformOverview>
   platformSchools(): Promise<PlatformSchool[]>
@@ -617,12 +725,6 @@ export interface DataProvider {
   }): Promise<PlatformIncident>
   platformIncidents(): Promise<PlatformIncident[]>
   platformCloseIncident(id: string, closed: boolean): Promise<void>
-  /**
-   * Открыть чужое пространство правами главного админа. Возвращает его так,
-   * будто он в нём редактор — участником при этом не становится, поэтому
-   * состав курса не меняется и ученики ничего не видят.
-   */
-  platformSpace(spaceId: string): Promise<SpaceView | null>
 
   /* --- realtime --- */
   subscribe(cb: (e: ChangeEvent) => void): () => void

@@ -35,8 +35,6 @@ interface AppApi {
   allAssignments: AssignmentView[]
   tasks: Task[]
   loading: boolean
-  /** открыто чужое пространство правами главного админа — id или null */
-  adminSpaceId: string | null
   bootstrapped: boolean
   /** может добавлять и править материалы в текущем пространстве */
   canEdit: boolean
@@ -92,8 +90,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [bootstrapped, setBootstrapped] = useState(false)
-  /** id чужого пространства, открытого правами главного администратора */
-  const [adminSpaceId, setAdminSpaceId] = useState<string | null>(null)
 
   const [query, setQuery] = useState('')
   const [view, setViewState] = useState<ViewMode>(
@@ -163,27 +159,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshSpaces = useCallback(async () => {
     if (!user) return
     const list = await db.listSpaces()
-    const wanted = spaceIdRef.current
-
-    // Главный админ мог открыть чужое пространство из панели платформы. Он в
-    // нём не участник, поэтому в обычный список оно не попадает — добираем
-    // его отдельно и помечаем, чтобы интерфейс честно сказал, где мы.
-    if (wanted && !list.some((s) => s.id === wanted)) {
-      try {
-        if (await db.isPlatformAdmin()) {
-          const extra = await db.platformSpace(wanted)
-          if (extra) {
-            setSpaces([...list, extra])
-            setAdminSpaceId(extra.id)
-            return
-          }
-        }
-      } catch {
-        // нет прав или сеть молчит — ведём себя как обычно
-      }
-    }
-
-    setAdminSpaceId(null)
     setSpaces(list)
     if (list.length && !list.some((s) => s.id === spaceIdRef.current)) {
       setSpaceId(list[0].id)
@@ -312,7 +287,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       allAssignments,
       tasks,
       loading,
-      adminSpaceId,
       bootstrapped,
       canEdit,
       canManage,
@@ -348,7 +322,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       allAssignments,
       tasks,
       loading,
-      adminSpaceId,
       bootstrapped,
       canEdit,
       canManage,

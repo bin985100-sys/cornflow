@@ -21,9 +21,10 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  ListTree,
+  ClipboardCheck,
   Baby,
   UserCog,
-  ClipboardCheck,
   Star,
   Sun,
   UserPlus,
@@ -272,6 +273,8 @@ export function Sidebar() {
           />
           {/* учителю — все его группы, разложенные по предметам */}
           {isTeacher && <SidebarLink to="/app/teaching" icon={Layers} label="Мои группы" />}
+          {isTeacher && <SidebarLink to="/app/review" icon={ClipboardCheck} label="Проверка работ" />}
+          {isTeacher && <SidebarLink to="/app/curriculum" icon={ListTree} label="Планы" />}
           <SidebarLink to="/app/tasks" icon={CheckSquare} label="Задачи" />
           {showCalendar && <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />}
           {isOwner && <SidebarLink to="/app/progress" icon={Users} label="Прогресс учеников" />}

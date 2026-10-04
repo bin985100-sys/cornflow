@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   ArrowDownWideNarrow,
@@ -17,6 +17,8 @@ import { MATERIAL_ICON } from '@/lib/icons'
 import { cardPalette, cx, dueLabel, excerpt, normalize, stripHtml } from '@/lib/utils'
 import { Avatar, EventChip, Segmented, TagPill } from '@/components/ui/primitives'
 import { Menu } from '@/components/ui/Menu'
+import { db } from '@/lib/db'
+import type { AppNotification } from '@/lib/types'
 
 const TITLES: Record<string, string> = {
   '/app': 'Дашборд',
@@ -39,6 +41,24 @@ export function Topbar() {
 
   const [focused, setFocused] = useState(false)
   const [bellOpen, setBellOpen] = useState(false)
+  // оповещения о работах и сообщениях — отдельно от дедлайнов
+  const [alerts, setAlerts] = useState<AppNotification[]>([])
+  const unread = alerts.filter((n) => !n.read_at).length
+
+  const loadAlerts = useCallback(async () => {
+    try {
+      setAlerts(await db.listNotifications(30))
+    } catch {
+      /* колокольчик не должен ронять шапку */
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadAlerts()
+    // минутного опроса достаточно: это не чат, а сводка событий
+    const timer = window.setInterval(() => void loadAlerts(), 60_000)
+    return () => window.clearInterval(timer)
+  }, [loadAlerts])
   const inputRef = useRef<HTMLInputElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -259,28 +279,59 @@ export function Topbar() {
           <div className="relative">
             <button
               className="cf-icon-btn relative"
-              onClick={() => setBellOpen((v) => !v)}
+              onClick={() => {
+                setBellOpen((v) => !v)
+                // открыли — значит прочитали: счётчик не должен висеть вечно
+                if (unread) void db.markNotificationsRead().then(loadAlerts).catch(() => undefined)
+              }}
               title="Уведомления"
             >
               <Bell size={16} />
-              {notifications.length > 0 && (
+              {unread + notifications.length > 0 && (
                 <span
                   className="absolute -right-0.5 -top-0.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full px-1 text-[9.5px] font-bold text-white"
                   style={{ background: 'var(--cf-red-acc)' }}
                 >
-                  {notifications.length}
+                  {unread + notifications.length}
                 </span>
               )}
             </button>
             {bellOpen && (
               <>
                 <div className="fixed inset-0 z-[55]" onClick={() => setBellOpen(false)} />
-                <div className="absolute right-0 z-[60] mt-2 w-[320px] animate-scale-in overflow-hidden rounded-[22px] border border-line bg-surface p-2 shadow-pop">
+                <div className="absolute right-0 z-[60] mt-2 max-h-[70vh] w-[340px] animate-scale-in overflow-y-auto rounded-[22px] border border-line bg-surface p-2 shadow-pop">
+                  {alerts.length > 0 && (
+                    <>
+                      <p className="px-2 py-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
+                        События
+                      </p>
+                      {alerts.slice(0, 12).map((n) => (
+                        <button
+                          key={n.id}
+                          onClick={() => {
+                            setBellOpen(false)
+                            if (n.link) navigate(n.link)
+                          }}
+                          className={cx(
+                            'flex w-full flex-col items-start gap-0.5 rounded-[16px] px-2.5 py-2 text-left transition duration-200 hover:bg-surface-2',
+                            !n.read_at && 'bg-brand-soft/40',
+                          )}
+                        >
+                          <span className="text-[13.5px] font-medium text-ink">{n.title}</span>
+                          {n.body && <span className="text-[12px] text-ink-3">{n.body}</span>}
+                        </button>
+                      ))}
+                      <div className="my-1 h-px bg-line" />
+                    </>
+                  )}
+
                   <p className="px-2 py-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
                     Ближайшие дедлайны
                   </p>
                   {notifications.length === 0 ? (
-                    <p className="px-2 py-6 text-center text-[13px] text-ink-3">Всё спокойно 🎉</p>
+                    <p className="px-2 py-4 text-center text-[13px] text-ink-3">
+                      {alerts.length ? 'Дедлайнов нет' : 'Всё спокойно 🎉'}
+                    </p>
                   ) : (
                     notifications.map(({ a, due }) => (
                       <button

@@ -29,6 +29,9 @@ export function LessonModal({
   const [priorityId, setPriorityId] = useState('')
   const [periodId, setPeriodId] = useState('')
   const [homework, setHomework] = useState('')
+  const [homeworkDue, setHomeworkDue] = useState('')
+  const [theory, setTheory] = useState('')
+  const [task, setTask] = useState('')
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -45,6 +48,9 @@ export function LessonModal({
       setPriorityId(lesson.priority_id ?? '')
       setPeriodId(lesson.period_id ?? '')
       setHomework(lesson.homework ?? '')
+      setHomeworkDue(lesson.homework_due?.slice(0, 10) ?? '')
+      setTheory(lesson.theory ?? '')
+      setTask(lesson.task ?? '')
       setNotes(lesson.notes ?? '')
     } else {
       setTitle('')
@@ -87,10 +93,17 @@ export function LessonModal({
         priority_id: priorityId || null,
         period_id: periodId || null,
         homework: homework.trim() || null,
+        homework_due: homeworkDue || null,
+        theory: theory.trim() || null,
+        task: task.trim() || null,
         notes: notes.trim() || null,
       }
       if (lesson) await db.updateLesson(lesson.id, payload)
-      else await db.createLesson({ space_id: gb.spaceId, ...payload })
+      else {
+        const created = await db.createLesson({ space_id: gb.spaceId, ...payload })
+        // новое занятие само попадает в КТП курса; плана нет — он заведётся
+        await db.attachLessonToPlan(created.id).catch(() => undefined)
+      }
       await gb.refresh()
       toast.success(lesson ? 'Занятие обновлено' : 'Занятие добавлено')
       onClose()
@@ -237,14 +250,43 @@ export function LessonModal({
           </Field>
         </div>
 
-        <Field label="Домашнее задание" hint="Ученики увидят его в дневнике под занятием">
+        <Field label="Теория" hint="То, что объясняется на занятии. Попадёт в КТП вместе с занятием">
           <textarea
             className="cf-input min-h-[70px] w-full resize-y"
-            value={homework}
-            onChange={(e) => setHomework(e.target.value)}
-            placeholder="Что сделать к следующему занятию"
+            value={theory}
+            onChange={(e) => setTheory(e.target.value)}
+            placeholder="Новый материал, определения, формулы"
           />
         </Field>
+
+        <Field label="Задание на занятие" hint="То, что делают в классе, — не домашнее">
+          <textarea
+            className="cf-input min-h-[60px] w-full resize-y"
+            value={task}
+            onChange={(e) => setTask(e.target.value)}
+            placeholder="Упражнения, разбор, лабораторная"
+          />
+        </Field>
+
+        <div className="grid gap-3 sm:grid-cols-[1fr_170px]">
+          <Field label="Домашнее задание" hint="Ученики увидят его в дневнике под занятием">
+            <textarea
+              className="cf-input min-h-[70px] w-full resize-y"
+              value={homework}
+              onChange={(e) => setHomework(e.target.value)}
+              placeholder="Что сделать к следующему занятию"
+            />
+          </Field>
+
+          <Field label="Сдать до" hint="После этой даты работа считается просроченной">
+            <input
+              type="date"
+              className="cf-input w-full"
+              value={homeworkDue}
+              onChange={(e) => setHomeworkDue(e.target.value)}
+            />
+          </Field>
+        </div>
 
         <Field label="Заметка учителя" hint="Видна только тем, кто может редактировать пространство">
           <textarea

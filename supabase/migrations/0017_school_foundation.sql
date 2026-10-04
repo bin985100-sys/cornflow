@@ -190,21 +190,21 @@ end $$;
 create or replace function public.person_role_list(p_person uuid)
 returns school_role[]
 language sql stable security definer set search_path = public
-as $$
+as $fn$
   select array_agg(distinct r.role order by r.role)
   from (
     select role from public.person_roles where person_id = p_person
     union
     select role from public.school_people where id = p_person
   ) r;
-$$;
+$fn$;
 
 -- Готовый учебный год: год, два полугодия и пять четвертей вместе с летней.
 -- Админу остаётся поправить даты, а не заводить девять строк руками.
 create or replace function public.school_term_preset(p_school uuid, p_year_start date)
 returns uuid
 language plpgsql security definer set search_path = public
-as $$
+as $fn$
 declare
   y_id uuid;
   y_end date := (p_year_start + interval '1 year' - interval '1 day')::date;
@@ -241,7 +241,7 @@ begin
        y_end, 4);
 
   return y_id;
-end $$;
+end $fn$;
 
 grant execute on function public.person_role_list(uuid) to authenticated;
 grant execute on function public.school_term_preset(uuid, date) to authenticated;

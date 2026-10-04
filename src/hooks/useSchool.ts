@@ -3,12 +3,12 @@ import { db } from '@/lib/db'
 import type {
   GroupView,
   PersonAccess,
+  SchoolRole,
+  SchoolTerm,
   School,
   SchoolClass,
   SchoolPerson,
-  SchoolRole,
   SchoolSnapshot,
-  SchoolTerm,
   SubjectView,
 } from '@/lib/types'
 
@@ -20,6 +20,7 @@ const EMPTY: SchoolSnapshot = {
   myRoles: ['student'],
   terms: [],
   holidays: [],
+  lessonKinds: [],
   access: [],
   parallels: [],
   classes: [],
@@ -57,12 +58,12 @@ export interface SchoolApi extends SchoolSnapshot {
   /** период, помеченный текущим; иначе тот, в который попадает сегодня */
   currentTerm: SchoolTerm | null
   termLabel: (termId: string | null | undefined) => string
-  /** роли и привязки человека */
-  accessOf: (personId: string) => PersonAccess
+  /** роли и привязки конкретного человека */
+  accessOf: (personId: string) => PersonAccess | null
+  /** есть ли у текущего пользователя такая роль в этой школе */
   hasRole: (role: SchoolRole) => boolean
 }
 
-/** Названия ролей в единственном числе, для списков и чипов */
 export const ROLE_LABEL: Record<SchoolRole, string> = {
   admin: 'Администратор',
   teacher: 'Учитель',
@@ -174,59 +175,47 @@ export function useSchool(): SchoolApi {
     [classLabel, data.parallels],
   )
 
-  const years = useMemo(
-    () => data.terms.filter((t) => t.kind === 'year').sort((a, b) => a.position - b.position),
-    [data.terms],
-  )
-
-  const termChildren = useCallback(
-    (parentId: string) =>
-      data.terms.filter((t) => t.parent_id === parentId).sort((a, b) => a.position - b.position),
-    [data.terms],
-  )
-
-  const currentTerm = useMemo(() => {
-    const marked = data.terms.find((t) => t.is_current && t.kind !== 'year')
-    if (marked) return marked
-    // ничего не помечено — берём тот период, в который попадает сегодня
-    const today = new Date().toISOString().slice(0, 10)
-    return (
-      data.terms.find((t) => t.kind === 'quarter' && t.start_date <= today && today <= t.end_date) ??
-      data.terms.find((t) => t.is_current) ??
-      null
-    )
-  }, [data.terms])
-
-  const termLabel = useCallback(
-    (termId: string | null | undefined) => {
-      if (!termId) return 'без периода'
-      const term = data.terms.find((t) => t.id === termId)
-      if (!term) return 'период удалён'
-      const parent = term.parent_id ? data.terms.find((t) => t.id === term.parent_id) : null
-      const year = parent?.parent_id ? data.terms.find((t) => t.id === parent.parent_id) : parent
-      return year && year.id !== term.id ? `${term.name} · ${year.name}` : term.name
-    },
-    [data.terms],
-  )
-
-  const accessOf = useCallback(
-    (personId: string): PersonAccess =>
-      data.access.find((a) => a.person_id === personId) ?? {
-        person_id: personId,
-        roles: [],
-        class_ids: [],
-        child_ids: [],
-      },
-    [data.access],
-  )
-
-  const hasRole = useCallback((role: SchoolRole) => data.myRoles.includes(role), [data.myRoles])
-
   const students = useMemo(() => data.people.filter((p) => p.role === 'student'), [data.people])
   const teachers = useMemo(
     () => data.people.filter((p) => p.role === 'teacher' || p.role === 'admin'),
     [data.people],
   )
+
+  const years = useMemo(
+    () => data.terms.filter((t) => t.kind === 'year').sort((a, b) => a.start_date.localeCompare(b.start_date)),
+    [data.terms],
+  )
+
+  const termChildren = useCallback(
+    (parentId: string) =>
+      data.terms
+        .filter((t) => t.parent_id === parentId)
+        .sort((a, b) => a.position - b.position || a.start_date.localeCompare(b.start_date)),
+    [data.terms],
+  )
+
+  // отмеченный вручную важнее вычисленного: администратор мог сдвинуть даты
+  const currentTerm = useMemo(() => {
+    const marked = data.terms.find((t) => t.is_current && t.kind !== 'year')
+    if (marked) return marked
+    const today = new Date().toISOString().slice(0, 10)
+    return (
+      data.terms.find((t) => t.kind === 'quarter' && t.start_date <= today && t.end_date >= today) ?? null
+    )
+  }, [data.terms])
+
+  const termLabel = useCallback(
+    (termId: string | null | undefined) =>
+      termId ? (data.terms.find((t) => t.id === termId)?.name ?? 'период удалён') : 'без периода',
+    [data.terms],
+  )
+
+  const accessOf = useCallback(
+    (personId: string) => data.access.find((a) => a.person_id === personId) ?? null,
+    [data.access],
+  )
+
+  const hasRole = useCallback((role: SchoolRole) => data.myRoles.includes(role), [data.myRoles])
 
   return {
     ...data,
