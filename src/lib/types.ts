@@ -583,6 +583,13 @@ export interface Grade {
   score: number | null
   flag: GradeFlag
   comment: string | null
+  /**
+   * За что стоит оценка: «за устный ответ», «за решение задачи 5».
+   *
+   * Название работы говорит, за какую работу, но не за что именно — за одну и
+   * ту же контрольную ставят и за решение, и за ответ у доски.
+   */
+  reason: string | null
   graded_by: string | null
   updated_at: string
 }
@@ -733,6 +740,148 @@ export interface MyMembership {
   roles: SchoolRole[]
 }
 
+/* ------------------- запросы на изменение состава групп ------------------- */
+
+export type RosterRequestKind = 'add' | 'remove'
+export type RosterRequestStatus = 'pending' | 'approved' | 'declined'
+
+/**
+ * Просьба учителя изменить состав группы.
+ *
+ * Состав правит администратор, но расхождение замечает учитель: к нему ходит
+ * ученик, которого в списке нет.
+ */
+export interface RosterRequest {
+  id: string
+  school_id: string
+  group_id: string
+  person_id: string
+  kind: RosterRequestKind
+  status: RosterRequestStatus
+  requested_by: string | null
+  note: string | null
+  decided_by: string | null
+  decided_at: string | null
+  decision_note: string | null
+  created_at: string
+}
+
+/** Запрос вместе с именами — чтобы очередь читалась без лишних запросов */
+export interface RosterRequestView extends RosterRequest {
+  group_name: string
+  person_name: string
+  requested_by_name: string
+}
+
+/* ----------------------------- своды оценок ------------------------------ */
+
+/** Одна клетка свода: ученик × предмет × период */
+export interface SummaryCell {
+  person_id: string
+  subject_name: string
+  term_id: string
+  average: number | null
+  /** сколько оценок в клетке — средний по одной оценке читается иначе */
+  count: number
+}
+
+/**
+ * Свод оценок класса: четверти выбранного года плюс всё, что нужно таблице.
+ *
+ * Годовая оценка здесь не хранится: её считают из четвертных, и как именно —
+ * решает интерфейс, а не запрос.
+ */
+export interface GradeSummary {
+  terms: Array<{ id: string; name: string }>
+  people: Array<{ id: string; name: string }>
+  subjects: string[]
+  cells: SummaryCell[]
+}
+
+/* --------------------------- роли-наблюдатели ---------------------------- */
+
+/** Кем приходится подопечный наблюдателю */
+export type WardRelation = 'child' | 'class'
+
+/** Человек, за которым может наблюдать родитель, классрук или завуч */
+export interface Ward {
+  person_id: string
+  user_id: string | null
+  name: string
+  class_label: string
+  relation: WardRelation
+}
+
+/** Предмет подопечного: сводка, а не полный журнал */
+export interface WardSubject {
+  space_id: string
+  subject_name: string
+  average: number | null
+  scale_max: number | null
+  /** свежие оценки, новые первыми */
+  recent: Array<{ title: string; score: number | null; date: string; reason: string | null }>
+  /** домашние задания, срок которых ещё не вышел */
+  homework: Array<{ title: string; text: string; due: string | null }>
+  absences: number
+  lates: number
+}
+
+export interface WardDiary {
+  ward: Ward
+  subjects: WardSubject[]
+  average: number | null
+}
+
+/* ------------------------------ расписание ------------------------------- */
+
+/** Ячейка сетки звонков: номер урока и время */
+export interface BellSlot {
+  id: string
+  school_id: string
+  /** своя сетка для ступени; пусто — общая для всех */
+  level: SchoolLevel | null
+  position: number
+  starts_at: string
+  ends_at: string
+  created_at: string
+}
+
+/** Курс, поставленный в ячейку «день × номер урока» */
+export interface ScheduleEntry {
+  id: string
+  school_id: string
+  assignment_id: string
+  /** период, на который стоит расписание */
+  term_id: string | null
+  /** 1 — понедельник, 7 — воскресенье */
+  weekday: number
+  slot_id: string
+  room: string | null
+  created_at: string
+}
+
+/** Один урок в расписании человека — всё, что нужно показать в сетке */
+export interface ScheduleLesson {
+  entry_id: string
+  assignment_id: string
+  space_id: string | null
+  subject_name: string
+  group_name: string
+  teachers: string
+  weekday: number
+  slot: BellSlot
+  room: string | null
+}
+
+/** День расписания: уроки или объяснение, почему их нет */
+export interface ScheduleDay {
+  date: string
+  weekday: number
+  /** попал в каникулы — уроков нет у всех */
+  holiday: string | null
+  lessons: ScheduleLesson[]
+}
+
 /* ---------------------------- КТП и уроки -------------------------------- */
 
 /**
@@ -825,6 +974,15 @@ export interface SchoolSubject {
   created_at: string
 }
 
+/** Частая формулировка «за что»: школа заводит, учитель выбирает в клик */
+export interface GradeReason {
+  id: string
+  school_id: string
+  text: string
+  position: number
+  created_at: string
+}
+
 /** Тип оценивания предмета — шаблон для журнала курса */
 export interface SubjectAssessmentType {
   id: string
@@ -887,6 +1045,9 @@ export interface SchoolSnapshot {
   terms: SchoolTerm[]
   holidays: SchoolHoliday[]
   lessonKinds: LessonKind[]
+  gradeReasons: GradeReason[]
+  bells: BellSlot[]
+  schedule: ScheduleEntry[]
   access: PersonAccess[]
   parallels: SchoolParallel[]
   classes: SchoolClass[]

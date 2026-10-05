@@ -33,6 +33,17 @@ interface Active {
 }
 
 /** Сетка «ученики × работы»: быстрый ввод с клавиатуры, цвет по шкале, итоги. */
+/** Частые формулировки «за что» — подсказка, а не ограничение */
+const REASON_HINTS = [
+  'За устный ответ',
+  'За работу на уроке',
+  'За домашнюю работу',
+  'За контрольную',
+  'За самостоятельную',
+  'За проект',
+  'За тетрадь',
+]
+
 export function GradeGrid({ gb, onCreateItem, onEditItem }: Props) {
   const toast = useToast()
   const { students, periodItems: items, grades, categories, scaleFor, canEdit } = gb
@@ -423,8 +434,8 @@ export function GradeGrid({ gb, onCreateItem, onEditItem }: Props) {
                             }}
                             onKeyDown={(e) => void onCellKey(e, r, c)}
                             title={
-                              grade?.comment
-                                ? grade.comment
+                              grade?.reason || grade?.comment
+                                ? [grade.reason, grade.comment].filter(Boolean).join(' · ')
                                 : grade && grade.score !== null
                                   ? `${trimNumber(grade.score)} из ${trimNumber(item.max_score)} · ${Math.round(percentOf(grade.score, item.max_score, scale))}%`
                                   : 'Нет оценки'
@@ -645,6 +656,7 @@ export function CellEditor({
   )
   const [flag, setFlag] = useState<Grade['flag']>(existing?.flag ?? 'none')
   const [comment, setComment] = useState(existing?.comment ?? '')
+  const [reason, setReason] = useState(existing?.reason ?? '')
   const [parts, setParts] = useState<Record<string, string>>(() => {
     const out: Record<string, string> = {}
     for (const c of criteria) {
@@ -701,15 +713,17 @@ export function CellEditor({
           return { criterion_id: c.id, score: num }
         })
         await db.setCriterionScores(item.id, studentId, values)
-        if ((comment.trim() || null) !== (existing?.comment ?? null)) {
-          await db.setGrade(item.id, studentId, { comment: comment.trim() || null })
-        }
+        await db.setGrade(item.id, studentId, {
+          comment: comment.trim() || null,
+          reason: reason.trim() || null,
+        })
       } else {
         const value = score.trim().replace(',', '.')
         await db.setGrade(item.id, studentId, {
           score: flag === 'none' && value !== '' ? Number(value) : null,
           flag,
           comment: comment.trim() || null,
+          reason: reason.trim() || null,
         })
       }
       await gb.refresh()
@@ -803,6 +817,26 @@ export function CellEditor({
               />
             </label>
           ))}
+
+        <label className="mt-3 block">
+          <span className="mb-1 block text-[12px] font-semibold text-ink-2">За что</span>
+          <input
+            className="cf-input w-full"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="За устный ответ"
+            list="cf-grade-reasons"
+          />
+          <datalist id="cf-grade-reasons">
+            {REASON_HINTS.map((r) => (
+              <option key={r} value={r} />
+            ))}
+          </datalist>
+          <span className="mt-1 block text-[11.5px] text-ink-3">
+            Название работы говорит, за какую работу. Эта строка — за что именно; её видит ученик и
+            родитель.
+          </span>
+        </label>
 
         <label className="mt-3 block">
           <span className="mb-1 block text-[12px] font-semibold text-ink-2">Комментарий ученику</span>

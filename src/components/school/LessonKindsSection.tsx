@@ -114,3 +114,88 @@ export function LessonKindsSection({ school }: { school: SchoolApi }) {
     </section>
   )
 }
+
+/**
+ * Частые формулировки «за что».
+ *
+ * Поле у оценки свободное — это лишь подсказки, чтобы учитель не печатал
+ * «за устный ответ» в сотый раз, а школа говорила одними словами.
+ */
+export function GradeReasonsSection({ school }: { school: SchoolApi }) {
+  const toast = useToast()
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function add() {
+    if (!school.schoolId || !text.trim()) return
+    setBusy(true)
+    try {
+      await db.createGradeReason(school.schoolId, text)
+      setText('')
+      await school.refresh()
+    } catch (e) {
+      toast.error(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="cf-card space-y-3 p-4">
+      <header>
+        <h2 className="text-[15px] font-semibold">Формулировки «за что»</h2>
+        <p className="mt-0.5 text-[12.5px] text-ink-3">
+          Подсказки учителю при выставлении оценки. Поле остаётся свободным — это не ограничение.
+        </p>
+      </header>
+
+      {school.isAdmin && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="cf-input min-w-[200px] flex-1"
+            placeholder="За устный ответ"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void add()}
+          />
+          <button className="cf-btn-brand px-4" disabled={busy || !text.trim()} onClick={() => void add()}>
+            <Plus size={15} /> Добавить
+          </button>
+        </div>
+      )}
+
+      {school.gradeReasons.length === 0 ? (
+        <p className="text-[12.5px] text-ink-3">
+          Пока ни одной. Учитель всё равно может написать свою — список лишь экономит ему время.
+        </p>
+      ) : (
+        <ul className="flex flex-wrap gap-1.5">
+          {school.gradeReasons.map((r) => (
+            <li
+              key={r.id}
+              className="cf-pill flex items-center gap-1.5 px-2.5 py-[3px] text-[12.5px] font-medium"
+            >
+              {r.text}
+              {school.isAdmin && (
+                <button
+                  className="text-ink-3 transition-colors hover:text-red-500"
+                  onClick={async () => {
+                    try {
+                      await db.deleteGradeReason(r.id)
+                      await school.refresh()
+                    } catch (e) {
+                      toast.error(e)
+                    }
+                  }}
+                  title="Убрать подсказку"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}

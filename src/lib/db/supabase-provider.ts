@@ -1,5 +1,20 @@
 import { submissionState } from '@/lib/submissions'
+import { buildWeek } from '@/lib/schedule'
 import type {
+  GradeReason,
+  RosterRequestStatus,
+  RosterRequestKind,
+  RosterRequestView,
+  RosterRequest,
+  SummaryCell,
+  GradeSummary,
+  WardSubject,
+  WardDiary,
+  Ward,
+  ScheduleLesson,
+  ScheduleDay,
+  ScheduleEntry,
+  BellSlot,
   SchoolLevel,
   TermKind,
   SchoolTerm,
@@ -1695,6 +1710,7 @@ export class SupabaseProvider implements DataProvider {
     if (input.score !== undefined) payload.score = input.score
     if (input.flag !== undefined) payload.flag = input.flag
     if (input.comment !== undefined) payload.comment = input.comment
+    if (input.reason !== undefined) payload.reason = input.reason
 
     return unwrap(
       await supabase()
@@ -2017,6 +2033,9 @@ export class SupabaseProvider implements DataProvider {
       terms,
       holidays,
       kinds,
+      reasons,
+      bells,
+      scheduleRows,
       roleRows,
       classRows,
       childRows,
@@ -2037,6 +2056,9 @@ export class SupabaseProvider implements DataProvider {
       supabase().from('school_terms').select('*').eq('school_id', schoolId).order('position'),
       supabase().from('school_holidays').select('*').eq('school_id', schoolId).order('start_date'),
       supabase().from('lesson_kinds').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('grade_reasons').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('bell_slots').select('*').eq('school_id', schoolId).order('position'),
+      supabase().from('schedule_entries').select('*').eq('school_id', schoolId),
       supabase().from('person_roles').select('*'),
       supabase().from('person_classes').select('*'),
       supabase().from('parent_children').select('*'),
@@ -2084,6 +2106,9 @@ export class SupabaseProvider implements DataProvider {
       terms: (terms.data ?? []) as unknown as SchoolTerm[],
       holidays: (holidays.data ?? []) as unknown as SchoolHoliday[],
       lessonKinds: (kinds.data ?? []) as unknown as LessonKind[],
+      gradeReasons: (reasons.data ?? []) as unknown as GradeReason[],
+      bells: (bells.data ?? []) as unknown as BellSlot[],
+      schedule: (scheduleRows.data ?? []) as unknown as ScheduleEntry[],
       access,
       parallels: (parallels.data ?? []) as unknown as SchoolParallel[],
       classes: (classes.data ?? []) as unknown as SchoolClass[],
@@ -2656,6 +2681,533 @@ export class SupabaseProvider implements DataProvider {
     const { error } = await supabase().from('teaching_assignments').delete().eq('id', id)
     if (error) throw new Error(humanError(error))
     this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async createGradeReason(schoolId: string, text: string): Promise<GradeReason> {
+    const { count } = await supabase()
+      .from('grade_reasons')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', schoolId)
+    const row = unwrap(
+      await supabase()
+        .from('grade_reasons')
+        .insert({ school_id: schoolId, text: text.trim(), position: count ?? 0 })
+        .select()
+        .single(),
+    ) as unknown as GradeReason
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteGradeReason(id: string): Promise<void> {
+    const { error } = await supabase().from('grade_reasons').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /* ------------------- запросы на изменение состава групп ---------------- */
+
+  async listRosterRequests(
+    schoolId: string,
+    status: RosterRequestStatus | 'all' = 'pending',
+  ): Promise<RosterRequestView[]> {
+    let q = supabase()
+      .from('roster_requests')
+      .select(
+        '*, school_groups(name), person:school_people!roster_requests_person_id_fkey(last_name, first_name), author:school_people!roster_requests_requested_by_fkey(last_name, first_name)',
+      )
+      .eq('school_id', schoolId)
+      .order('created_at', { ascending: false })
+    if (status !== 'all') q = q.eq('status', status)
+
+    const { data, error } = await q
+    if (error) throw new Error(humanError(error))
+
+    return ((data ?? []) as unknown as Array<
+      RosterRequest & {
+        school_groups: { name: string } | null
+        person: { last_name: string; first_name: string } | null
+        author: { last_name: string; first_name: string } | null
+      }
+    >).map((row) => {
+      const { school_groups, person, author, ...plain } = row
+      const name = (p?: { last_name: string; first_name: string } | null) =>
+        p ? [p.last_name, p.first_name].filter(Boolean).join(' ').trim() : ''
+      return {
+        ...(plain as RosterRequest),
+        group_name: school_groups?.name ?? 'группа удалена',
+        person_name: name(person) || 'ученик удалён',
+        requested_by_name: name(author) || '—',
+      }
+    })
+  }
+
+  async requestRosterChange(input: {
+    school_id: string
+    group_id: string
+    person_id: string
+    kind: RosterRequestKind
+    note?: string | null
+  }): Promise<RosterRequest> {
+    const me = await this.requireUser()
+    const { data: mine } = await supabase()
+      .from('school_people')
+      .select('id')
+      .eq('school_id', input.school_id)
+      .eq('user_id', me.id)
+      .maybeSingle()
+
+    const row = unwrap(
+      await supabase()
+        .from('roster_requests')
+        .insert({
+          school_id: input.school_id,
+          group_id: input.group_id,
+          person_id: input.person_id,
+          kind: input.kind,
+          note: input.note ?? null,
+          requested_by: (mine as { id?: string } | null)?.id ?? null,
+        })
+        .select()
+        .single(),
+    ) as unknown as RosterRequest
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async decideRosterRequest(id: string, approve: boolean, note?: string | null): Promise<void> {
+    const { error } = await supabase().rpc('roster_decide', {
+      p_request: id,
+      p_approve: approve,
+      p_note: note ?? null,
+    })
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  /* ----------------------------- своды оценок --------------------------- */
+
+  async gradeSummary(input: {
+    school_id: string
+    class_id: string
+    year_id?: string | null
+  }): Promise<GradeSummary> {
+    const { data: termRows } = await supabase()
+      .from('school_terms')
+      .select('*')
+      .eq('school_id', input.school_id)
+    const terms = (termRows ?? []) as unknown as SchoolTerm[]
+    const year = terms.find((t) => t.id === input.year_id) ?? terms.find((t) => t.kind === 'year')
+    const halves = year ? terms.filter((t) => t.parent_id === year.id) : []
+    const quarters = terms
+      .filter((t) => t.kind === 'quarter' && halves.some((h) => h.id === t.parent_id))
+      .sort((a, b) => a.start_date.localeCompare(b.start_date))
+
+    const { data: peopleRows } = await supabase()
+      .from('school_people')
+      .select('id, user_id, last_name, first_name')
+      .eq('school_id', input.school_id)
+      .eq('class_id', input.class_id)
+      .eq('role', 'student')
+      .order('last_name')
+    const students = (peopleRows ?? []) as Array<{
+      id: string
+      user_id: string | null
+      last_name: string
+      first_name: string
+    }>
+    const userIds = students.map((p) => p.user_id).filter((x): x is string => Boolean(x))
+    if (!userIds.length || !quarters.length) {
+      return {
+        terms: quarters.map((t) => ({ id: t.id, name: t.name })),
+        people: students.map((p) => ({
+          id: p.id,
+          name: [p.last_name, p.first_name].filter(Boolean).join(' ').trim() || 'Ученик',
+        })),
+        subjects: [],
+        cells: [],
+      }
+    }
+
+    const { data: memberRows } = await supabase()
+      .from('space_members')
+      .select('space_id, user_id')
+      .in('user_id', userIds)
+    const members = (memberRows ?? []) as Array<{ space_id: string; user_id: string }>
+    const spaceIds = [...new Set(members.map((m) => m.space_id))]
+    if (!spaceIds.length) {
+      return {
+        terms: quarters.map((t) => ({ id: t.id, name: t.name })),
+        people: students.map((p) => ({
+          id: p.id,
+          name: [p.last_name, p.first_name].filter(Boolean).join(' ').trim() || 'Ученик',
+        })),
+        subjects: [],
+        cells: [],
+      }
+    }
+
+    const [{ data: courseRows }, { data: itemRows }, { data: gradeRows }] = await Promise.all([
+      supabase()
+        .from('teaching_assignments')
+        .select('space_id, school_subjects(name)')
+        .in('space_id', spaceIds),
+      supabase().from('grade_items').select('id, space_id, date').in('space_id', spaceIds),
+      supabase().from('grades').select('item_id, student_id, score').in('student_id', userIds),
+    ])
+
+    const subjectBySpace = new Map(
+      ((courseRows ?? []) as unknown as Array<{ space_id: string; school_subjects: { name: string } | null }>)
+        .map((c) => [c.space_id, c.school_subjects?.name ?? 'Предмет']),
+    )
+    const items = (itemRows ?? []) as Array<{ id: string; space_id: string; date: string }>
+    const itemById = new Map(items.map((i) => [i.id, i]))
+    const grades = (gradeRows ?? []) as Array<{
+      item_id: string
+      student_id: string
+      score: number | null
+    }>
+
+    const cells: SummaryCell[] = []
+    const subjects = new Set<string>()
+
+    for (const person of students) {
+      if (!person.user_id) continue
+      for (const m of members.filter((x) => x.user_id === person.user_id)) {
+        const subjectName = subjectBySpace.get(m.space_id)
+        // личные пространства ученика в свод не идут: там нет предмета
+        if (!subjectName) continue
+        subjects.add(subjectName)
+
+        for (const term of quarters) {
+          // оценка попадает в период по дате работы, а не по дате выставления
+          const scores = grades
+            .filter((g) => {
+              if (g.student_id !== person.user_id || g.score === null) return false
+              const item = itemById.get(g.item_id)
+              if (!item || item.space_id !== m.space_id) return false
+              const date = item.date.slice(0, 10)
+              return date >= term.start_date && date <= term.end_date
+            })
+            .map((g) => g.score!)
+          cells.push({
+            person_id: person.id,
+            subject_name: subjectName,
+            term_id: term.id,
+            average: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null,
+            count: scores.length,
+          })
+        }
+      }
+    }
+
+    return {
+      terms: quarters.map((t) => ({ id: t.id, name: t.name })),
+      people: students.map((p) => ({
+        id: p.id,
+        name: [p.last_name, p.first_name].filter(Boolean).join(' ').trim() || 'Ученик',
+      })),
+      subjects: [...subjects].sort((a, b) => a.localeCompare(b, 'ru')),
+      cells,
+    }
+  }
+
+  /* --------------------------- роли-наблюдатели ------------------------- */
+
+  async listWards(): Promise<Ward[]> {
+    const me = await this.requireUser()
+    const { data: mineRows } = await supabase()
+      .from('school_people')
+      .select('id, school_id')
+      .eq('user_id', me.id)
+    const mine = ((mineRows ?? []) as Array<{ id: string; school_id: string }>)[0]
+    if (!mine) return []
+
+    const [{ data: childRows }, { data: classRows }] = await Promise.all([
+      supabase().from('parent_children').select('child_id').eq('parent_id', mine.id),
+      supabase().from('person_classes').select('class_id').eq('person_id', mine.id),
+    ])
+    const childIds = ((childRows ?? []) as Array<{ child_id: string }>).map((c) => c.child_id)
+    const classIds = ((classRows ?? []) as Array<{ class_id: string }>).map((c) => c.class_id)
+    if (!childIds.length && !classIds.length) return []
+
+    // одним запросом: и дети, и ученики закреплённых классов
+    const filters: string[] = []
+    if (childIds.length) filters.push(`id.in.(${childIds.join(',')})`)
+    if (classIds.length) filters.push(`class_id.in.(${classIds.join(',')})`)
+    const { data: peopleRows } = await supabase()
+      .from('school_people')
+      .select('id, user_id, last_name, first_name, class_id, role, school_classes(name, school_parallels(name))')
+      .eq('school_id', mine.school_id)
+      .or(filters.join(','))
+
+    const rows = (peopleRows ?? []) as unknown as Array<{
+      id: string
+      user_id: string | null
+      last_name: string
+      first_name: string
+      class_id: string | null
+      role: SchoolRole
+      school_classes: { name: string; school_parallels: { name: string } | null } | null
+    }>
+
+    return rows
+      .filter((p) => childIds.includes(p.id) || p.role === 'student')
+      .map((p) => {
+        const prefix = p.school_classes?.school_parallels?.name ?? ''
+        const name = p.school_classes?.name ?? ''
+        const glue = /^\d+$/.test(prefix) && name.length <= 2 ? '' : ' '
+        return {
+          person_id: p.id,
+          user_id: p.user_id,
+          name: [p.last_name, p.first_name].filter(Boolean).join(' ').trim() || 'Ученик',
+          class_label: name ? `${prefix}${glue}${name}`.trim() : '—',
+          relation: childIds.includes(p.id) ? ('child' as const) : ('class' as const),
+        }
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+  }
+
+  async wardDiary(personId: string): Promise<WardDiary> {
+    const wards = await this.listWards()
+    const ward = wards.find((w) => w.person_id === personId)
+    if (!ward) throw new Error('Нет доступа к этому ученику')
+    if (!ward.user_id) return { ward, subjects: [], average: null }
+
+    const today = new Date().toISOString().slice(0, 10)
+    const { data: memberRows } = await supabase()
+      .from('space_members')
+      .select('space_id, spaces(name)')
+      .eq('user_id', ward.user_id)
+    const spaces = (memberRows ?? []) as unknown as Array<{
+      space_id: string
+      spaces: { name: string } | null
+    }>
+    if (!spaces.length) return { ward, subjects: [], average: null }
+
+    const spaceIds = spaces.map((m) => m.space_id)
+    const [{ data: courseRows }, { data: itemRows }, { data: gradeRows }, { data: scaleRows },
+      { data: lessonRows }, { data: attendanceRows }] = await Promise.all([
+      supabase()
+        .from('teaching_assignments')
+        .select('space_id, school_subjects(name)')
+        .in('space_id', spaceIds),
+      supabase().from('grade_items').select('id, space_id, title').in('space_id', spaceIds),
+      supabase().from('grades').select('item_id, score, updated_at, reason').eq('student_id', ward.user_id),
+      supabase().from('grade_scales').select('space_id, max_value, is_default').in('space_id', spaceIds),
+      supabase()
+        .from('lessons')
+        .select('space_id, title, homework, homework_due, date')
+        .in('space_id', spaceIds)
+        .not('homework', 'is', null),
+      supabase().from('attendance').select('space_id, status').eq('student_id', ward.user_id),
+    ])
+
+    const courses = new Map(
+      ((courseRows ?? []) as unknown as Array<{ space_id: string; school_subjects: { name: string } | null }>)
+        .map((c) => [c.space_id, c.school_subjects?.name ?? '']),
+    )
+    const items = (itemRows ?? []) as Array<{ id: string; space_id: string; title: string }>
+    const itemById = new Map(items.map((i) => [i.id, i]))
+    const grades = (gradeRows ?? []) as Array<{
+      item_id: string
+      score: number | null
+      updated_at: string
+      reason: string | null
+    }>
+    const scales = (scaleRows ?? []) as Array<{ space_id: string; max_value: number; is_default: boolean }>
+    const lessons = (lessonRows ?? []) as Array<{
+      space_id: string
+      title: string
+      homework: string | null
+      homework_due: string | null
+      date: string
+    }>
+    const attendance = (attendanceRows ?? []) as Array<{ space_id: string; status: AttendanceStatus }>
+
+    const subjects: WardSubject[] = []
+    for (const m of spaces) {
+      // личные пространства ученика в сводку не идут: там нет предмета
+      if (!courses.has(m.space_id)) continue
+      const mine = grades
+        .filter((g) => g.score !== null && itemById.get(g.item_id)?.space_id === m.space_id)
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+      const scores = mine.map((g) => g.score!).filter((n) => Number.isFinite(n))
+      const here = attendance.filter((a) => a.space_id === m.space_id)
+
+      subjects.push({
+        space_id: m.space_id,
+        subject_name: courses.get(m.space_id) || m.spaces?.name || 'Предмет',
+        average: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null,
+        scale_max: scales.find((s) => s.space_id === m.space_id && s.is_default)?.max_value ?? null,
+        recent: mine.slice(0, 5).map((g) => ({
+          title: itemById.get(g.item_id)?.title ?? 'Работа',
+          score: g.score,
+          date: g.updated_at.slice(0, 10),
+          reason: g.reason,
+        })),
+        homework: lessons
+          .filter((l) => l.space_id === m.space_id && (l.homework_due ?? l.date) >= today)
+          .sort((a, b) => (a.homework_due ?? a.date).localeCompare(b.homework_due ?? b.date))
+          .slice(0, 5)
+          .map((l) => ({ title: l.title, text: l.homework ?? '', due: l.homework_due })),
+        absences: here.filter((a) => a.status === 'absent').length,
+        lates: here.filter((a) => a.status === 'late').length,
+      })
+    }
+
+    subjects.sort((a, b) => a.subject_name.localeCompare(b.subject_name, 'ru'))
+    const withAvg = subjects.filter((s) => s.average !== null)
+    return {
+      ward,
+      subjects,
+      average: withAvg.length ? withAvg.reduce((n, s) => n + (s.average ?? 0), 0) / withAvg.length : null,
+    }
+  }
+
+  /* ------------------------------ расписание ---------------------------- */
+
+  async createBellSlot(input: {
+    school_id: string
+    level?: SchoolLevel | null
+    position: number
+    starts_at: string
+    ends_at: string
+  }): Promise<BellSlot> {
+    const row = unwrap(
+      await supabase()
+        .from('bell_slots')
+        .insert({ ...input, level: input.level ?? null })
+        .select()
+        .single(),
+    ) as unknown as BellSlot
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updateBellSlot(
+    id: string,
+    patch: Partial<Pick<BellSlot, 'starts_at' | 'ends_at' | 'position' | 'level'>>,
+  ): Promise<BellSlot> {
+    const row = unwrap(
+      await supabase().from('bell_slots').update(patch).eq('id', id).select().single(),
+    ) as unknown as BellSlot
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async deleteBellSlot(id: string): Promise<void> {
+    const { error } = await supabase().from('bell_slots').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async createBellPreset(schoolId: string, firstAt = '08:30'): Promise<void> {
+    const { error } = await supabase().rpc('bell_preset', { p_school: schoolId, p_first: firstAt })
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async placeLesson(input: {
+    school_id: string
+    assignment_id: string
+    term_id?: string | null
+    weekday: number
+    slot_id: string
+    room?: string | null
+  }): Promise<ScheduleEntry> {
+    const row = unwrap(
+      await supabase()
+        .from('schedule_entries')
+        .insert({ ...input, term_id: input.term_id ?? null, room: input.room ?? null })
+        .select()
+        .single(),
+    ) as unknown as ScheduleEntry
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async updatePlacement(id: string, patch: Partial<Pick<ScheduleEntry, 'room'>>): Promise<ScheduleEntry> {
+    const row = unwrap(
+      await supabase().from('schedule_entries').update(patch).eq('id', id).select().single(),
+    ) as unknown as ScheduleEntry
+    this.listeners.forEach((l) => l({ table: 'school' }))
+    return row
+  }
+
+  async removePlacement(id: string): Promise<void> {
+    const { error } = await supabase().from('schedule_entries').delete().eq('id', id)
+    if (error) throw new Error(humanError(error))
+    this.listeners.forEach((l) => l({ table: 'school' }))
+  }
+
+  async myWeek(mondayIso: string): Promise<ScheduleDay[]> {
+    const me = await this.requireUser()
+
+    // школы, где человек состоит; расписание берём из первой
+    const { data: personRows } = await supabase()
+      .from('school_people')
+      .select('id, school_id, role')
+      .eq('user_id', me.id)
+    const person = ((personRows ?? []) as Array<{ id: string; school_id: string; role: SchoolRole }>)[0]
+    if (!person) return buildWeek(mondayIso, [], [])
+
+    const [{ data: slotRows }, { data: entryRows }, { data: holidayRows }, { data: groupRows }] =
+      await Promise.all([
+        supabase().from('bell_slots').select('*').eq('school_id', person.school_id).order('position'),
+        supabase()
+          .from('schedule_entries')
+          .select(
+            '*, teaching_assignments(id, space_id, subject_id, group_id, school_subjects(name), school_groups(name))',
+          )
+          .eq('school_id', person.school_id),
+        supabase().from('school_holidays').select('*').eq('school_id', person.school_id),
+        supabase().from('group_members').select('group_id').eq('person_id', person.id),
+      ])
+
+    const myGroups = new Set(((groupRows ?? []) as Array<{ group_id: string }>).map((g) => g.group_id))
+    const { data: myTeaching } = await supabase()
+      .from('teaching_teachers')
+      .select('assignment_id')
+      .eq('teacher_id', person.id)
+    const myAssignments = new Set(
+      ((myTeaching ?? []) as Array<{ assignment_id: string }>).map((t) => t.assignment_id),
+    )
+
+    const slots = (slotRows ?? []) as unknown as BellSlot[]
+    const slotById = new Map(slots.map((s) => [s.id, s]))
+
+    const lessons: ScheduleLesson[] = []
+    for (const raw of (entryRows ?? []) as unknown as Array<
+      ScheduleEntry & {
+        teaching_assignments: {
+          id: string
+          space_id: string | null
+          group_id: string
+          school_subjects: { name: string } | null
+          school_groups: { name: string } | null
+        } | null
+      }
+    >) {
+      const a = raw.teaching_assignments
+      const slot = slotById.get(raw.slot_id)
+      if (!a || !slot) continue
+      // своё расписание: группы ученика плюс курсы учителя
+      if (!myGroups.has(a.group_id) && !myAssignments.has(a.id)) continue
+      lessons.push({
+        entry_id: raw.id,
+        assignment_id: a.id,
+        space_id: a.space_id,
+        subject_name: a.school_subjects?.name ?? 'Предмет',
+        group_name: a.school_groups?.name ?? '',
+        teachers: '',
+        weekday: raw.weekday,
+        slot,
+        room: raw.room,
+      })
+    }
+
+    return buildWeek(mondayIso, lessons, (holidayRows ?? []) as unknown as SchoolHoliday[])
   }
 
   /* ---------------------------- КТП и уроки ---------------------------- */

@@ -265,6 +265,9 @@ export function DiaryView({ gb, studentId }: { gb: GradebookApi; studentId: stri
                         </ul>
                       )
                     })()}
+                    {grade.reason && (
+                      <p className="mt-1 text-[12.5px] font-medium text-ink-2">{grade.reason}</p>
+                    )}
                     {grade.comment && (
                       <p className="mt-1 flex items-start gap-1.5 text-[12.5px] text-ink-2">
                         <MessageSquare size={12} className="mt-[3px] shrink-0" />

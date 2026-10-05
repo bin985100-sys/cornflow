@@ -15,6 +15,8 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { CurriculumPage } from '@/pages/CurriculumPage'
 import { DiaryPage } from '@/pages/DiaryPage'
 import { ReviewPage } from '@/pages/ReviewPage'
+import { SchedulePage } from '@/pages/SchedulePage'
+import { WardsPage } from '@/pages/WardsPage'
 import { JoinPage } from '@/pages/JoinPage'
 import { GradebookPage } from '@/pages/GradebookPage'
 import { LandingPage } from '@/pages/LandingPage'
@@ -27,6 +29,9 @@ import { AdminSettingsPage } from '@/pages/admin/AdminSettingsPage'
 import {
   AdminClassesPage,
   AdminTermsPage,
+  AdminSchedulePage,
+  AdminSummaryPage,
+  AdminRequestsPage,
   AdminCoursesPage,
   AdminDepartmentsPage,
   AdminGroupsPage,
@@ -84,6 +89,9 @@ function Shell() {
       >
         <Route index element={<AdminOverviewPage />} />
         <Route path="terms" element={<AdminTermsPage />} />
+        <Route path="schedule" element={<AdminSchedulePage />} />
+        <Route path="summary" element={<AdminSummaryPage />} />
+        <Route path="requests" element={<AdminRequestsPage />} />
         <Route path="classes" element={<AdminClassesPage />} />
         <Route path="students" element={<AdminStudentsPage />} />
         <Route path="teachers" element={<AdminTeachersPage />} />
@@ -152,6 +160,10 @@ function Shell() {
         <Route path="curriculum" element={<CurriculumPage />} />
         {/* проверка сданных работ по всем курсам */}
         <Route path="review" element={<ReviewPage />} />
+        {/* расписание: ученику — его группы, учителю — его курсы */}
+        <Route path="schedule" element={<SchedulePage />} />
+        {/* родитель, классный руководитель и завуч смотрят на подопечных */}
+        <Route path="wards" element={<WardsPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="starred" element={<StarredPage />} />

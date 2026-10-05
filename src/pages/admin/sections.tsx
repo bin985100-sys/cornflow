@@ -2,8 +2,11 @@ import { ClassesSection } from '@/components/school/ClassesSection'
 import { DepartmentsSection } from '@/components/school/DepartmentsSection'
 import { GroupsSection } from '@/components/school/GroupsSection'
 import { PeopleSection } from '@/components/school/PeopleSection'
-import { LessonKindsSection } from '@/components/school/LessonKindsSection'
+import { GradeReasonsSection, LessonKindsSection } from '@/components/school/LessonKindsSection'
 import { SubjectsSection } from '@/components/school/SubjectsSection'
+import { RequestsSection } from '@/components/school/RequestsSection'
+import { ScheduleSection } from '@/components/school/ScheduleSection'
+import { SummarySection } from '@/components/school/SummarySection'
 import { TermsSection } from '@/components/school/TermsSection'
 import { TeachingSection } from '@/components/school/TeachingSection'
 import { useSchoolCtx } from '@/context/SchoolContext'
@@ -29,6 +32,39 @@ export function AdminTermsPage() {
       subtitle="Учебный год, полугодия и четверти — по ним считаются своды оценок. Плюс каникулы: на эти дни расписание не ставится."
     >
       <TermsSection school={useSchoolCtx()} />
+    </Page>
+  )
+}
+
+export function AdminSchedulePage() {
+  return (
+    <Page
+      title="Расписание"
+      subtitle="Сетка звонков и курсы по ячейкам «день × номер урока». Из неё собирается расписание и ученика, и учителя."
+    >
+      <ScheduleSection school={useSchoolCtx()} />
+    </Page>
+  )
+}
+
+export function AdminSummaryPage() {
+  return (
+    <Page
+      title="Своды оценок"
+      subtitle="Средний балл класса по четвертям и за год. Считается из журналов курсов — отдельно ничего вводить не нужно."
+    >
+      <SummarySection school={useSchoolCtx()} />
+    </Page>
+  )
+}
+
+export function AdminRequestsPage() {
+  return (
+    <Page
+      title="Запросы"
+      subtitle="Учителя просят изменить состав своих групп. Принятый запрос сразу меняет состав — второй раз в справочник заходить не нужно."
+    >
+      <RequestsSection school={useSchoolCtx()} />
     </Page>
   )
 }
@@ -73,6 +109,7 @@ export function AdminSubjectsPage() {
     <Page title="Предметы" subtitle="МО, название, классы где предмет можно проводить, и типы оценивания для журнала.">
       <SubjectsSection school={useSchoolCtx()} />
       <LessonKindsSection school={useSchoolCtx()} />
+      <GradeReasonsSection school={useSchoolCtx()} />
     </Page>
   )
 }

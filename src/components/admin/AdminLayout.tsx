@@ -11,6 +11,9 @@ import {
   LogOut,
   Layers,
   CalendarRange,
+  CalendarClock,
+  Table2,
+  Inbox,
   Settings,
   ShieldCheck,
   UserCog,
@@ -22,18 +25,54 @@ import { useSchoolCtx } from '@/context/SchoolContext'
 import { Avatar } from '@/components/ui/primitives'
 import { cx } from '@/lib/utils'
 
-const NAV: Array<{ to: string; icon: LucideIcon; label: string; end?: boolean }> = [
-  { to: '/admin', icon: LayoutGrid, label: 'Обзор', end: true },
-  { to: '/admin/terms', icon: CalendarRange, label: 'Периоды' },
-  { to: '/admin/classes', icon: Layers, label: 'Классы' },
-  { to: '/admin/students', icon: Users, label: 'Ученики' },
-  { to: '/admin/teachers', icon: UserCog, label: 'Учителя' },
-  { to: '/admin/departments', icon: Boxes, label: 'МО' },
-  { to: '/admin/subjects', icon: BookOpen, label: 'Предметы' },
-  { to: '/admin/groups', icon: GraduationCap, label: 'Группы' },
-  { to: '/admin/courses', icon: Building2, label: 'Курсы' },
-  { to: '/admin/settings', icon: Settings, label: 'Настройки школы' },
+interface NavItem {
+  to: string
+  icon: LucideIcon
+  label: string
+  end?: boolean
+}
+
+/**
+ * Разделов стало тринадцать, и плоским списком они читаются плохо: заводят
+ * школу один раз, а в расписание и своды ходят каждую неделю. Поэтому группы —
+ * «Люди», «Учёба», «Работа» — и порядок от редкого к частому внутри.
+ */
+const NAV: Array<{ title: string | null; items: NavItem[] }> = [
+  {
+    title: null,
+    items: [{ to: '/admin', icon: LayoutGrid, label: 'Обзор', end: true }],
+  },
+  {
+    title: 'Люди',
+    items: [
+      { to: '/admin/classes', icon: Layers, label: 'Классы' },
+      { to: '/admin/students', icon: Users, label: 'Ученики' },
+      { to: '/admin/teachers', icon: UserCog, label: 'Учителя' },
+      { to: '/admin/departments', icon: Boxes, label: 'МО' },
+    ],
+  },
+  {
+    title: 'Учёба',
+    items: [
+      { to: '/admin/subjects', icon: BookOpen, label: 'Предметы' },
+      { to: '/admin/groups', icon: GraduationCap, label: 'Группы' },
+      { to: '/admin/courses', icon: Building2, label: 'Курсы' },
+      { to: '/admin/terms', icon: CalendarRange, label: 'Периоды' },
+    ],
+  },
+  {
+    title: 'Работа',
+    items: [
+      { to: '/admin/schedule', icon: CalendarClock, label: 'Расписание' },
+      { to: '/admin/requests', icon: Inbox, label: 'Запросы' },
+      { to: '/admin/summary', icon: Table2, label: 'Своды оценок' },
+      { to: '/admin/settings', icon: Settings, label: 'Настройки школы' },
+    ],
+  },
 ]
+
+/** Плоский список для мобильной полосы: там заголовки групп только мешают */
+const FLAT: NavItem[] = NAV.flatMap((g) => g.items)
 
 /** Каркас панели: свой сайдбар, никакого пространства и журнала. */
 export function AdminLayout() {
@@ -66,22 +105,31 @@ export function AdminLayout() {
           )}
         </div>
 
-        <nav className="cf-stagger mt-5 flex-1 space-y-0.5 overflow-y-auto">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                cx(
-                  'flex items-center gap-2.5 rounded-[14px] px-3 py-2 text-[13.5px] transition-colors',
-                  isActive ? 'bg-brand-soft font-medium text-brand' : 'text-ink-2 hover:bg-surface-2',
-                )
-              }
-            >
-              <item.icon size={16} />
-              {item.label}
-            </NavLink>
+        <nav className="cf-stagger mt-5 flex-1 overflow-y-auto">
+          {NAV.map((group) => (
+            <div key={group.title ?? 'main'} className="space-y-0.5">
+              {group.title && (
+                <p className="mb-1 mt-4 px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-3">
+                  {group.title}
+                </p>
+              )}
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    cx(
+                      'flex items-center gap-2.5 rounded-[14px] px-3 py-2 text-[13.5px] transition-colors',
+                      isActive ? 'bg-brand-soft font-medium text-brand' : 'text-ink-2 hover:bg-surface-2',
+                    )
+                  }
+                >
+                  <item.icon size={16} />
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -114,7 +162,7 @@ export function AdminLayout() {
       <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8">
         {/* мобильная навигация */}
         <div className="cf-no-scrollbar -mx-1 mb-4 flex gap-1 overflow-x-auto px-1 lg:hidden">
-          {NAV.map((item) => (
+          {FLAT.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

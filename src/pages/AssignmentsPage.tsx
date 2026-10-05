@@ -8,10 +8,19 @@ import { CardSkeletonGrid, EmptyState, Segmented } from '@/components/ui/primiti
 
 type Filter = 'all' | 'upcoming' | 'done' | 'late'
 
+/**
+ * По чему раскладывать список.
+ *
+ * Два среза нужны обоим: ученику важно, что сдавать первым (дедлайн), а
+ * учителю — что он выдал последним (дата выдачи).
+ */
+type Slice = 'due' | 'assigned'
+
 export function AssignmentsPage() {
   const { assignments, loading, canManage, showAssignments, query, space } = useApp()
   const create = useCreate()
   const [filter, setFilter] = useState<Filter>('all')
+  const [slice, setSlice] = useState<Slice>('due')
 
   const visible = useMemo(() => {
     const q = normalize(query)
@@ -31,6 +40,21 @@ export function AssignmentsPage() {
       }
     })
   }, [assignments, query, filter, canManage])
+
+  const sorted = useMemo(() => {
+    const rows = [...visible]
+    if (slice === 'assigned') {
+      // по дате выдачи: свежее сверху
+      return rows.sort((a, b) => b.created_at.localeCompare(a.created_at))
+    }
+    // по сроку сдачи: ближайшее сверху, бессрочные в конец
+    return rows.sort((a, b) => {
+      if (!a.due_date && !b.due_date) return 0
+      if (!a.due_date) return 1
+      if (!b.due_date) return -1
+      return a.due_date.localeCompare(b.due_date)
+    })
+  }, [visible, slice])
 
   if (!showAssignments) {
     return (
@@ -53,7 +77,16 @@ export function AssignmentsPage() {
             {space?.name} · {plural(visible.length, 'задание', 'задания', 'заданий')}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            value={slice}
+            onChange={setSlice}
+            size="sm"
+            options={[
+              { value: 'due', label: 'По сроку' },
+              { value: 'assigned', label: 'По выдаче' },
+            ]}
+          />
           <Segmented
             value={filter}
             onChange={setFilter}
@@ -94,7 +127,7 @@ export function AssignmentsPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {visible.map((a, i) => (
+          {sorted.map((a, i) => (
             <AssignmentCard
               key={a.id}
               assignment={a}

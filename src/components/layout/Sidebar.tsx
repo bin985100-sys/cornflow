@@ -22,6 +22,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ListTree,
+  CalendarClock,
   ClipboardCheck,
   Baby,
   UserCog,
@@ -61,6 +62,11 @@ export function Sidebar() {
   const roleView = useRoles()
   // роль в школе важнее роли аккаунта: один человек бывает и учителем, и родителем
   const isTeacher = roleView.roles.length ? roleView.active === 'teacher' : accountTeacher
+  // родитель, классрук и завуч смотрят на один и тот же экран подопечных
+  const isObserver =
+    roleView.active === 'parent' ||
+    roleView.active === 'homeroom' ||
+    roleView.active === 'headteacher'
   // ссылка на панель платформы видна только владельцу сервиса
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
   useEffect(() => {
@@ -257,6 +263,7 @@ export function Sidebar() {
 
         {/* -------------------------------- навигация -------------------------- */}
         <nav className="cf-stagger cf-no-scrollbar mt-3 flex-1 overflow-y-auto px-3 pb-4">
+          {/* Пространство: то, ради чего человек сюда и зашёл */}
           <SidebarLink to="/app" icon={LayoutGrid} label="Дашборд" end />
           <SidebarLink to="/app/library" icon={FolderIcon} label="Все материалы" />
           {showAssignments && (
@@ -265,6 +272,12 @@ export function Sidebar() {
               <SidebarLink to="/app/quizzes" icon={ListChecks} label="Тесты" />
             </>
           )}
+          <SidebarLink to="/app/tasks" icon={CheckSquare} label="Задачи" />
+          {showCalendar && <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />}
+
+          {/* Школа: разделов стало много, поэтому они отделены заголовком */}
+          <SectionTitle title="Школа" />
+          <SidebarLink to="/app/schedule" icon={CalendarClock} label="Расписание" />
           {/* учителю — журнал текущего курса, ученику — дневник по всем предметам */}
           <SidebarLink
             to={isTeacher ? '/app/gradebook' : '/app/diary'}
@@ -275,11 +288,24 @@ export function Sidebar() {
           {isTeacher && <SidebarLink to="/app/teaching" icon={Layers} label="Мои группы" />}
           {isTeacher && <SidebarLink to="/app/review" icon={ClipboardCheck} label="Проверка работ" />}
           {isTeacher && <SidebarLink to="/app/curriculum" icon={ListTree} label="Планы" />}
-          <SidebarLink to="/app/tasks" icon={CheckSquare} label="Задачи" />
-          {showCalendar && <SidebarLink to="/app/calendar" icon={BarChart3} label="Календарь" />}
+          {isObserver && (
+            <SidebarLink
+              to="/app/wards"
+              icon={roleView.active === 'parent' ? Baby : Users}
+              label={roleView.active === 'parent' ? 'Мои дети' : 'Мой класс'}
+            />
+          )}
           {isOwner && <SidebarLink to="/app/progress" icon={Users} label="Прогресс учеников" />}
-          {roleView.has('admin') && <SidebarLink to="/admin" icon={ShieldCheck} label="Админ-панель" />}
-          {isPlatformAdmin && <SidebarLink to="/platform" icon={ShieldAlert} label="Платформа" />}
+
+          {(roleView.has('admin') || isPlatformAdmin) && (
+            <>
+              <SectionTitle title="Управление" />
+              {roleView.has('admin') && (
+                <SidebarLink to="/admin" icon={ShieldCheck} label="Админ-панель" />
+              )}
+              {isPlatformAdmin && <SidebarLink to="/platform" icon={ShieldAlert} label="Платформа" />}
+            </>
+          )}
 
           {/* Избранное */}
           <SectionTitle

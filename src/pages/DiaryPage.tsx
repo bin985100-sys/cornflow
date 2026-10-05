@@ -279,6 +279,7 @@ function RecentGrades({ diary }: { diary: SubjectDiary[] }) {
                 <span className="block truncate text-[13px] font-medium">{item.title}</span>
                 <span className="block text-[12px] text-ink-3">
                   {subject.space.name} · {formatDate(item.date)}
+                  {grade.reason ? ` · ${grade.reason}` : ''}
                 </span>
                 {grade.comment && (
                   <span className="mt-0.5 flex items-start gap-1 text-[12px] text-ink-2">

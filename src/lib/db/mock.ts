@@ -1,5 +1,21 @@
 import { submissionState } from '@/lib/submissions'
+import { buildWeek } from '@/lib/schedule'
 import type {
+  GradeReason,
+  RosterRequestStatus,
+  RosterRequestKind,
+  RosterRequestView,
+  RosterRequest,
+  SummaryCell,
+  GradeSummary,
+  WardRelation,
+  WardSubject,
+  WardDiary,
+  Ward,
+  ScheduleLesson,
+  ScheduleDay,
+  ScheduleEntry,
+  BellSlot,
   TermKind,
   SchoolLevel,
   SchoolTerm,
@@ -110,7 +126,7 @@ import { DEFAULT_TAGS, personalSpace } from './seed'
 const DB_KEY = 'cornflow.db.v2'
 const DB_BACKUP_KEY = 'cornflow.db.v2.backup'
 const SESSION_KEY = 'cornflow.session.v2'
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 interface MockDB {
   __version: number
@@ -164,6 +180,10 @@ interface MockDB {
   person_classes: Array<{ person_id: string; class_id: string }>
   parent_children: Array<{ parent_id: string; child_id: string }>
   lesson_kinds: LessonKind[]
+  grade_reasons: GradeReason[]
+  bell_slots: BellSlot[]
+  schedule_entries: ScheduleEntry[]
+  roster_requests: RosterRequest[]
   curricula: Curriculum[]
   curriculum_topics: CurriculumTopic[]
   curriculum_lessons: CurriculumLesson[]
@@ -227,6 +247,10 @@ function emptyDb(): MockDB {
     person_classes: [],
     parent_children: [],
     lesson_kinds: [],
+    grade_reasons: [],
+    bell_slots: [],
+    schedule_entries: [],
+    roster_requests: [],
     curricula: [],
     curriculum_topics: [],
     curriculum_lessons: [],
@@ -489,6 +513,13 @@ export class MockProvider implements DataProvider {
       lessonKinds: this.db.lesson_kinds
         .filter((k) => k.school_id === schoolId)
         .sort((a, b) => a.position - b.position),
+      gradeReasons: this.db.grade_reasons
+        .filter((r) => r.school_id === schoolId)
+        .sort((a, b) => a.position - b.position),
+      bells: this.db.bell_slots
+        .filter((x) => x.school_id === schoolId)
+        .sort((a, b) => a.position - b.position),
+      schedule: this.db.schedule_entries.filter((x) => x.school_id === schoolId),
       access,
       parallels: this.db.school_parallels
         .filter((p) => p.school_id === schoolId)
@@ -1185,6 +1216,7 @@ export class MockProvider implements DataProvider {
           score: input.grade ?? null,
           flag: 'none',
           comment: input.comment ?? null,
+          reason: null,
           graded_by: me.id,
           updated_at: nowIso(),
         })
@@ -1302,6 +1334,466 @@ export class MockProvider implements DataProvider {
       .filter((n) => n.user_id === id && !n.read_at && (!ids?.length || ids.includes(n.id)))
       .forEach((n) => (n.read_at = nowIso()))
     this.persist({ table: 'assignments' })
+  }
+
+  async createGradeReason(schoolId: string, text: string): Promise<GradeReason> {
+    this.assertSchoolAdmin(schoolId)
+    const row: GradeReason = {
+      id: uid('reason'),
+      school_id: schoolId,
+      text: text.trim(),
+      position: this.db.grade_reasons.filter((r) => r.school_id === schoolId).length,
+      created_at: nowIso(),
+    }
+    this.db.grade_reasons.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteGradeReason(id: string): Promise<void> {
+    const row = this.db.grade_reasons.find((r) => r.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.grade_reasons = this.db.grade_reasons.filter((r) => r.id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  /* ------------------- запросы на изменение состава групп ---------------- */
+
+  private rosterView(r: RosterRequest): RosterRequestView {
+    const group = this.db.school_groups.find((g) => g.id === r.group_id)
+    const person = this.db.school_people.find((p) => p.id === r.person_id)
+    const author = this.db.school_people.find((p) => p.id === r.requested_by)
+    const name = (p?: SchoolPerson) =>
+      p ? [p.last_name, p.first_name].filter(Boolean).join(' ').trim() : ''
+    return {
+      ...r,
+      group_name: group?.name ?? 'группа удалена',
+      person_name: name(person) || 'ученик удалён',
+      requested_by_name: name(author) || '—',
+    }
+  }
+
+  async listRosterRequests(
+    schoolId: string,
+    status: RosterRequestStatus | 'all' = 'pending',
+  ): Promise<RosterRequestView[]> {
+    return this.db.roster_requests
+      .filter((r) => r.school_id === schoolId && (status === 'all' || r.status === status))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((r) => this.rosterView(r))
+  }
+
+  async requestRosterChange(input: {
+    school_id: string
+    group_id: string
+    person_id: string
+    kind: RosterRequestKind
+    note?: string | null
+  }): Promise<RosterRequest> {
+    const me = this.db.school_people.find(
+      (p) => p.school_id === input.school_id && p.user_id === this.sessionUserId(),
+    )
+    // пока запрос висит, повтор не добавляет информации
+    const pending = this.db.roster_requests.find(
+      (r) =>
+        r.group_id === input.group_id &&
+        r.person_id === input.person_id &&
+        r.kind === input.kind &&
+        r.status === 'pending',
+    )
+    if (pending) throw new Error('Такой запрос уже ждёт решения')
+
+    const row: RosterRequest = {
+      id: uid('req'),
+      school_id: input.school_id,
+      group_id: input.group_id,
+      person_id: input.person_id,
+      kind: input.kind,
+      status: 'pending',
+      requested_by: me?.id ?? null,
+      note: input.note ?? null,
+      decided_by: null,
+      decided_at: null,
+      decision_note: null,
+      created_at: nowIso(),
+    }
+    this.db.roster_requests.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async decideRosterRequest(id: string, approve: boolean, note?: string | null): Promise<void> {
+    const row = this.db.roster_requests.find((r) => r.id === id)
+    if (!row) throw new Error('Запрос не найден')
+    this.assertSchoolAdmin(row.school_id)
+    if (row.status !== 'pending') throw new Error('Запрос уже решён')
+
+    if (approve) {
+      if (row.kind === 'add') {
+        const exists = this.db.group_members.some(
+          (m) => m.group_id === row.group_id && m.person_id === row.person_id,
+        )
+        if (!exists) {
+          this.db.group_members.push({
+            group_id: row.group_id,
+            person_id: row.person_id,
+            added_at: nowIso(),
+          })
+        }
+      } else {
+        this.db.group_members = this.db.group_members.filter(
+          (m) => !(m.group_id === row.group_id && m.person_id === row.person_id),
+        )
+      }
+    }
+
+    const me = this.db.school_people.find(
+      (p) => p.school_id === row.school_id && p.user_id === this.sessionUserId(),
+    )
+    row.status = approve ? 'approved' : 'declined'
+    row.decided_by = me?.id ?? null
+    row.decided_at = nowIso()
+    row.decision_note = note ?? null
+    this.persist({ table: 'school' })
+  }
+
+  /* ----------------------------- своды оценок --------------------------- */
+
+  async gradeSummary(input: {
+    school_id: string
+    class_id: string
+    year_id?: string | null
+  }): Promise<GradeSummary> {
+    const year =
+      this.db.school_terms.find((t) => t.id === input.year_id) ??
+      this.db.school_terms.find((t) => t.school_id === input.school_id && t.kind === 'year')
+    const halves = year
+      ? this.db.school_terms.filter((t) => t.parent_id === year.id)
+      : []
+    const quarters = this.db.school_terms
+      .filter((t) => t.kind === 'quarter' && halves.some((h) => h.id === t.parent_id))
+      .sort((a, b) => a.start_date.localeCompare(b.start_date))
+
+    const students = this.db.school_people
+      .filter((p) => p.school_id === input.school_id && p.class_id === input.class_id && p.role === 'student')
+      .sort((a, b) => a.last_name.localeCompare(b.last_name, 'ru'))
+
+    const cells: SummaryCell[] = []
+    const subjects = new Set<string>()
+
+    for (const person of students) {
+      if (!person.user_id) continue
+      for (const member of this.db.space_members.filter((m) => m.user_id === person.user_id)) {
+        const assignment = this.db.teaching_assignments.find((a) => a.space_id === member.space_id)
+        if (!assignment) continue
+        const subject = this.db.school_subjects.find((x) => x.id === assignment.subject_id)
+        const subjectName = subject?.name ?? 'Предмет'
+        subjects.add(subjectName)
+
+        const items = this.db.grade_items.filter((i) => i.space_id === member.space_id)
+        for (const term of quarters) {
+          // оценка попадает в период по дате работы, а не по дате выставления
+          const inTerm = items.filter(
+            (i) => i.date.slice(0, 10) >= term.start_date && i.date.slice(0, 10) <= term.end_date,
+          )
+          const ids = new Set(inTerm.map((i) => i.id))
+          const scores = this.db.grades
+            .filter((g) => g.student_id === person.user_id && ids.has(g.item_id) && g.score !== null)
+            .map((g) => g.score!)
+          cells.push({
+            person_id: person.id,
+            subject_name: subjectName,
+            term_id: term.id,
+            average: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null,
+            count: scores.length,
+          })
+        }
+      }
+    }
+
+    return {
+      terms: quarters.map((t) => ({ id: t.id, name: t.name })),
+      people: students.map((p) => ({
+        id: p.id,
+        name: [p.last_name, p.first_name].filter(Boolean).join(' ').trim() || 'Ученик',
+      })),
+      subjects: [...subjects].sort((a, b) => a.localeCompare(b, 'ru')),
+      cells,
+    }
+  }
+
+  /* --------------------------- роли-наблюдатели ------------------------- */
+
+  async listWards(): Promise<Ward[]> {
+    const id = this.sessionUserId()
+    if (!id) return []
+    const me = this.db.school_people.find((p) => p.user_id === id)
+    if (!me) return []
+
+    const wards = new Map<string, Ward>()
+    const add = (personId: string, relation: WardRelation) => {
+      const person = this.db.school_people.find((p) => p.id === personId)
+      if (!person || wards.has(personId)) return
+      wards.set(personId, {
+        person_id: person.id,
+        user_id: person.user_id,
+        name: [person.last_name, person.first_name].filter(Boolean).join(' ').trim() || 'Ученик',
+        class_label: this.mockClassLabel(person.class_id),
+        relation,
+      })
+    }
+
+    // дети родителя
+    for (const link of this.db.parent_children.filter((c) => c.parent_id === me.id)) {
+      add(link.child_id, 'child')
+    }
+    // ученики закреплённых классов: классрук и завуч
+    const myClasses = this.db.person_classes.filter((c) => c.person_id === me.id).map((c) => c.class_id)
+    for (const person of this.db.school_people) {
+      if (person.role === 'student' && person.class_id && myClasses.includes(person.class_id)) {
+        add(person.id, 'class')
+      }
+    }
+
+    return [...wards.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+  }
+
+  /** «9» + «А» → «9А»; дублирует логику useSchool, но та живёт в UI */
+  private mockClassLabel(classId: string | null): string {
+    if (!classId) return '—'
+    const klass = this.db.school_classes.find((c) => c.id === classId)
+    if (!klass) return '—'
+    const parallel = this.db.school_parallels.find((p) => p.id === klass.parallel_id)
+    const prefix = parallel?.name ?? ''
+    const glue = /^\d+$/.test(prefix) && klass.name.length <= 2 ? '' : ' '
+    return `${prefix}${glue}${klass.name}`.trim() || klass.name
+  }
+
+  async wardDiary(personId: string): Promise<WardDiary> {
+    const wards = await this.listWards()
+    const ward = wards.find((w) => w.person_id === personId)
+    if (!ward) throw new Error('Нет доступа к этому ученику')
+    if (!ward.user_id) return { ward, subjects: [], average: null }
+
+    const today = new Date().toISOString().slice(0, 10)
+    const subjects: WardSubject[] = []
+
+    for (const member of this.db.space_members.filter((m) => m.user_id === ward.user_id)) {
+      const space = this.db.spaces.find((x) => x.id === member.space_id)
+      if (!space) continue
+      // личные пространства ученика в сводку не идут: там нет предмета
+      const assignment = this.db.teaching_assignments.find((a) => a.space_id === space.id)
+      if (!assignment) continue
+      const subject = this.db.school_subjects.find((x) => x.id === assignment.subject_id)
+
+      const items = this.db.grade_items.filter((i) => i.space_id === space.id)
+      const itemIds = new Set(items.map((i) => i.id))
+      const grades = this.db.grades
+        .filter((g) => g.student_id === ward.user_id && itemIds.has(g.item_id) && g.score !== null)
+        .map((g) => ({ g, item: items.find((i) => i.id === g.item_id)! }))
+        .filter((x) => Boolean(x.item))
+        .sort((a, b) => b.g.updated_at.localeCompare(a.g.updated_at))
+
+      const scale = this.db.grade_scales.find((x) => x.space_id === space.id && x.is_default)
+      const scores = grades.map((x) => x.g.score!).filter((n) => Number.isFinite(n))
+      const attendance = this.db.attendance.filter(
+        (a) => a.student_id === ward.user_id && a.space_id === space.id,
+      )
+
+      subjects.push({
+        space_id: space.id,
+        subject_name: subject?.name ?? space.name,
+        average: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null,
+        scale_max: scale?.max_value ?? null,
+        recent: grades.slice(0, 5).map((x) => ({
+          title: x.item.title,
+          score: x.g.score,
+          date: x.g.updated_at.slice(0, 10),
+          reason: x.g.reason,
+        })),
+        homework: this.db.lessons
+          .filter((l) => l.space_id === space.id && l.homework && (l.homework_due ?? l.date) >= today)
+          .sort((a, b) => (a.homework_due ?? a.date).localeCompare(b.homework_due ?? b.date))
+          .slice(0, 5)
+          .map((l) => ({ title: l.title, text: l.homework ?? '', due: l.homework_due })),
+        absences: attendance.filter((a) => a.status === 'absent').length,
+        lates: attendance.filter((a) => a.status === 'late').length,
+      })
+    }
+
+    subjects.sort((a, b) => a.subject_name.localeCompare(b.subject_name, 'ru'))
+    const withAvg = subjects.filter((s) => s.average !== null)
+    return {
+      ward,
+      subjects,
+      average: withAvg.length
+        ? withAvg.reduce((n, s) => n + (s.average ?? 0), 0) / withAvg.length
+        : null,
+    }
+  }
+
+  /* ------------------------------ расписание ---------------------------- */
+
+  async createBellSlot(input: {
+    school_id: string
+    level?: SchoolLevel | null
+    position: number
+    starts_at: string
+    ends_at: string
+  }): Promise<BellSlot> {
+    this.assertSchoolAdmin(input.school_id)
+    const row: BellSlot = {
+      id: uid('bell'),
+      school_id: input.school_id,
+      level: input.level ?? null,
+      position: input.position,
+      starts_at: input.starts_at,
+      ends_at: input.ends_at,
+      created_at: nowIso(),
+    }
+    this.db.bell_slots.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updateBellSlot(
+    id: string,
+    patch: Partial<Pick<BellSlot, 'starts_at' | 'ends_at' | 'position' | 'level'>>,
+  ): Promise<BellSlot> {
+    const row = this.db.bell_slots.find((x) => x.id === id)
+    if (!row) throw new Error('Урок сетки не найден')
+    this.assertSchoolAdmin(row.school_id)
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async deleteBellSlot(id: string): Promise<void> {
+    const row = this.db.bell_slots.find((x) => x.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.bell_slots = this.db.bell_slots.filter((x) => x.id !== id)
+    // ячейки этого урока исчезают вместе с ним
+    this.db.schedule_entries = this.db.schedule_entries.filter((x) => x.slot_id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  async createBellPreset(schoolId: string, firstAt = '08:30'): Promise<void> {
+    this.assertSchoolAdmin(schoolId)
+    const [h, m] = firstAt.split(':').map(Number)
+    const start = h * 60 + m
+    const hhmm = (mins: number) =>
+      `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`
+    for (let i = 0; i < 8; i++) {
+      // после второго и четвёртого урока перемена длиннее: обед
+      const at = start + i * 55 + (i >= 2 ? 15 : 0) + (i >= 4 ? 15 : 0)
+      await this.createBellSlot({
+        school_id: schoolId,
+        position: i,
+        starts_at: hhmm(at),
+        ends_at: hhmm(at + 45),
+      })
+    }
+  }
+
+  async placeLesson(input: {
+    school_id: string
+    assignment_id: string
+    term_id?: string | null
+    weekday: number
+    slot_id: string
+    room?: string | null
+  }): Promise<ScheduleEntry> {
+    this.assertSchoolAdmin(input.school_id)
+    const term = input.term_id ?? null
+    const clash = this.db.schedule_entries.find(
+      (x) =>
+        x.assignment_id === input.assignment_id &&
+        x.weekday === input.weekday &&
+        x.slot_id === input.slot_id &&
+        (x.term_id ?? null) === term,
+    )
+    if (clash) throw new Error('Этот курс уже стоит в этой ячейке')
+    const row: ScheduleEntry = {
+      id: uid('slot'),
+      school_id: input.school_id,
+      assignment_id: input.assignment_id,
+      term_id: term,
+      weekday: input.weekday,
+      slot_id: input.slot_id,
+      room: input.room ?? null,
+      created_at: nowIso(),
+    }
+    this.db.schedule_entries.push(row)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async updatePlacement(id: string, patch: Partial<Pick<ScheduleEntry, 'room'>>): Promise<ScheduleEntry> {
+    const row = this.db.schedule_entries.find((x) => x.id === id)
+    if (!row) throw new Error('Ячейка не найдена')
+    this.assertSchoolAdmin(row.school_id)
+    Object.assign(row, patch)
+    this.persist({ table: 'school' })
+    return row
+  }
+
+  async removePlacement(id: string): Promise<void> {
+    const row = this.db.schedule_entries.find((x) => x.id === id)
+    if (!row) return
+    this.assertSchoolAdmin(row.school_id)
+    this.db.schedule_entries = this.db.schedule_entries.filter((x) => x.id !== id)
+    this.persist({ table: 'school' })
+  }
+
+  async myWeek(mondayIso: string): Promise<ScheduleDay[]> {
+    const id = this.sessionUserId()
+    if (!id) return buildWeek(mondayIso, [], [])
+    const person = this.db.school_people.find((p) => p.user_id === id)
+    if (!person) return buildWeek(mondayIso, [], [])
+
+    const myGroups = new Set(
+      this.db.group_members.filter((m) => m.person_id === person.id).map((m) => m.group_id),
+    )
+    const myAssignments = new Set(
+      this.db.teaching_teachers.filter((t) => t.teacher_id === person.id).map((t) => t.assignment_id),
+    )
+
+    const lessons: ScheduleLesson[] = []
+    for (const entry of this.db.schedule_entries.filter((x) => x.school_id === person.school_id)) {
+      const a = this.db.teaching_assignments.find((x) => x.id === entry.assignment_id)
+      const slot = this.db.bell_slots.find((x) => x.id === entry.slot_id)
+      if (!a || !slot) continue
+      // своё расписание: группы ученика плюс курсы учителя
+      if (!myGroups.has(a.group_id) && !myAssignments.has(a.id)) continue
+      const subject = this.db.school_subjects.find((x) => x.id === a.subject_id)
+      const group = this.db.school_groups.find((x) => x.id === a.group_id)
+      lessons.push({
+        entry_id: entry.id,
+        assignment_id: a.id,
+        space_id: a.space_id,
+        subject_name: subject?.name ?? 'Предмет',
+        group_name: group?.name ?? '',
+        teachers: this.db.teaching_teachers
+          .filter((t) => t.assignment_id === a.id)
+          .map((t) => {
+            const p = this.db.school_people.find((x) => x.id === t.teacher_id)
+            return p ? `${p.last_name} ${p.first_name.slice(0, 1)}.` : ''
+          })
+          .filter(Boolean)
+          .join(', '),
+        weekday: entry.weekday,
+        slot,
+        room: entry.room,
+      })
+    }
+
+    return buildWeek(
+      mondayIso,
+      lessons,
+      this.db.school_holidays.filter((h) => h.school_id === person.school_id),
+    )
   }
 
   /* ---------------------------- КТП и уроки ---------------------------- */
@@ -3082,6 +3574,7 @@ export class MockProvider implements DataProvider {
             score: grade,
             flag: 'none',
             comment: null,
+            reason: null,
             graded_by: this.sessionUserId(),
             updated_at: nowIso(),
           })
@@ -3322,7 +3815,8 @@ export class MockProvider implements DataProvider {
       lesson_id: input.lesson_id ?? null,
       assignment_id: input.assignment_id ?? null,
       title: input.title.trim() || 'Работа',
-      date: input.date,
+      // без даты работа не попала бы ни в одну четверть свода
+      date: input.date || nowIso().slice(0, 10),
       max_score: input.max_score ?? defaultScale?.max_value ?? 5,
       weight: input.weight ?? 1,
       scale_id: input.scale_id ?? null,
@@ -3423,6 +3917,7 @@ export class MockProvider implements DataProvider {
         score: total,
         flag: 'none',
         comment: null,
+        reason: null,
         graded_by: me.id,
         updated_at: nowIso(),
       }
@@ -3451,6 +3946,7 @@ export class MockProvider implements DataProvider {
         score: null,
         flag: 'none',
         comment: null,
+        reason: null,
         graded_by: me.id,
         updated_at: nowIso(),
       }
@@ -3459,6 +3955,7 @@ export class MockProvider implements DataProvider {
     if (input.score !== undefined) grade.score = input.score
     if (input.flag !== undefined) grade.flag = input.flag
     if (input.comment !== undefined) grade.comment = input.comment
+    if (input.reason !== undefined) grade.reason = input.reason
     grade.graded_by = me.id
     grade.updated_at = nowIso()
     this.persist({ table: 'gradebook', spaceId: item.space_id })

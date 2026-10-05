@@ -1,4 +1,15 @@
 import type {
+  GradeReason,
+  RosterRequestStatus,
+  RosterRequestKind,
+  RosterRequestView,
+  RosterRequest,
+  GradeSummary,
+  WardDiary,
+  Ward,
+  ScheduleDay,
+  ScheduleEntry,
+  BellSlot,
   SchoolLevel,
   TermKind,
   SchoolTerm,
@@ -234,6 +245,8 @@ export interface GradeInput {
   score?: number | null
   flag?: GradeFlag
   comment?: string | null
+  /** за что стоит оценка — короткая формулировка для ученика */
+  reason?: string | null
 }
 
 /* ------------------------------ провайдер --------------------------------- */
@@ -619,6 +632,78 @@ export interface DataProvider {
   setParentChildren(parentId: string, childIds: string[]): Promise<void>
   /** роли текущего пользователя во всех его школах */
   myMemberships(): Promise<MyMembership[]>
+
+  /** Частые формулировки «за что» — справочник школы */
+  createGradeReason(schoolId: string, text: string): Promise<GradeReason>
+  deleteGradeReason(id: string): Promise<void>
+
+  /* ------------------- запросы на изменение состава групп ---------------- */
+
+  /** Очередь запросов школы; без статуса — только ожидающие решения */
+  listRosterRequests(schoolId: string, status?: RosterRequestStatus | 'all'): Promise<RosterRequestView[]>
+  /** Учитель просит добавить или убрать ученика из своей группы */
+  requestRosterChange(input: {
+    school_id: string
+    group_id: string
+    person_id: string
+    kind: RosterRequestKind
+    note?: string | null
+  }): Promise<RosterRequest>
+  /** Решение админа применяется тем же действием, что и принимается */
+  decideRosterRequest(id: string, approve: boolean, note?: string | null): Promise<void>
+
+  /* ----------------------------- своды оценок --------------------------- */
+
+  /**
+   * Свод по классу: средний балл за каждую четверть по каждому предмету.
+   * Оценка попадает в период по дате работы, а не по дате выставления.
+   */
+  gradeSummary(input: { school_id: string; class_id: string; year_id?: string | null }): Promise<GradeSummary>
+
+  /* --------------------------- роли-наблюдатели ------------------------- */
+
+  /**
+   * Кто доступен наблюдателю: дети родителя, ученики класса у классного
+   * руководителя и завуча. Пустой список — наблюдать не за кем.
+   */
+  listWards(): Promise<Ward[]>
+  /** Сводка по подопечному: предметы, свежие оценки, домашка, пропуски */
+  wardDiary(personId: string): Promise<WardDiary>
+
+  /* ------------------------------ расписание ---------------------------- */
+
+  createBellSlot(input: {
+    school_id: string
+    level?: SchoolLevel | null
+    position: number
+    starts_at: string
+    ends_at: string
+  }): Promise<BellSlot>
+  updateBellSlot(
+    id: string,
+    patch: Partial<Pick<BellSlot, 'starts_at' | 'ends_at' | 'position' | 'level'>>,
+  ): Promise<BellSlot>
+  deleteBellSlot(id: string): Promise<void>
+  /** Готовая сетка: восемь уроков по 45 минут с переменами */
+  createBellPreset(schoolId: string, firstAt?: string): Promise<void>
+
+  /** Поставить курс в ячейку «день × номер урока» */
+  placeLesson(input: {
+    school_id: string
+    assignment_id: string
+    term_id?: string | null
+    weekday: number
+    slot_id: string
+    room?: string | null
+  }): Promise<ScheduleEntry>
+  updatePlacement(id: string, patch: Partial<Pick<ScheduleEntry, 'room'>>): Promise<ScheduleEntry>
+  removePlacement(id: string): Promise<void>
+
+  /**
+   * Расписание текущего пользователя на неделю: ученику — его группы,
+   * учителю — его курсы. Каникулы вырезаются здесь же.
+   */
+  myWeek(mondayIso: string): Promise<ScheduleDay[]>
 
   /* ---------------------------- КТП и уроки ---------------------------- */
 

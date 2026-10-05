@@ -11,9 +11,9 @@ const ORDER: SchoolRole[] = ['student', 'parent', 'teacher', 'homeroom', 'headte
 export const ROLE_HOME: Record<SchoolRole, string> = {
   student: '/app/diary',
   teacher: '/app/teaching',
-  parent: '/app',
-  homeroom: '/app',
-  headteacher: '/app',
+  parent: '/app/wards',
+  homeroom: '/app/wards',
+  headteacher: '/app/wards',
   admin: '/admin',
 }
 
