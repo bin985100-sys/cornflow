@@ -55,7 +55,7 @@ create policy roster_requests_insert on public.roster_requests for insert with c
     select 1
     from public.group_teachers gt
     join public.school_people p on p.id = gt.person_id
-    where gt.group_id = group_id and p.user_id = auth.uid()
+    where gt.group_id = roster_requests.group_id and p.user_id = auth.uid()
   )
 );
 
