@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CornFlow — проверка связи</title>
+<style>
+  body { font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #F6F6F4; color: #0B0C10; margin: 0; padding: 32px 16px; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  p { color: #52545C; margin: 0 0 20px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 24px -12px rgba(16,24,40,.12); }
+  td, th { padding: 12px 14px; border-bottom: 1px solid #E9E9E4; text-align: left; font-size: 14px; }
+  th { background: #F4F4F1; font-weight: 600; }
+  .ok { color: #1F9D57; font-weight: 600; } .bad { color: #E5484D; font-weight: 600; } .wait { color: #8A8C94; }
+  button { margin-top: 18px; font: inherit; font-weight: 600; color: #fff; background: #2356FD; border: 0; border-radius: 999px; padding: 10px 22px; cursor: pointer; }
+  pre { background: #fff; padding: 12px; border-radius: 12px; font-size: 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Проверка связи с CornFlow</h1>
+  <p>Страница проверяет, как быстро доходят маленькие и большие ответы от сайта и от сервера данных. Откройте её без VPN и пришлите скриншот результата.</p>
+  <table>
+    <thead><tr><th>Что проверяем</th><th>Размер</th><th>Время</th><th>Итог</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <button id="again">Проверить ещё раз</button>
+  <pre id="info"></pre>
+</main>
+<script>
+const LIMIT = 60000
+const rows = document.getElementById('rows')
+const fmt = (b) => b > 1024 * 1024 ? (b / 1048576).toFixed(1) + ' МБ' : b > 1024 ? Math.round(b / 1024) + ' КБ' : b + ' Б'
+function row(name) {
+  const tr = document.createElement('tr')
+  tr.innerHTML = `<td>${name}</td><td>—</td><td class="wait">идёт…</td><td class="wait">…</td>`
+  rows.appendChild(tr)
+  return (size, ms, ok, note) => {
+    tr.children[1].textContent = size == null ? '—' : fmt(size)
+    tr.children[2].textContent = ms == null ? '—' : (ms / 1000).toFixed(2) + ' с'
+    tr.children[2].className = ''
+    tr.children[3].textContent = note || (ok ? 'нормально' : 'проблема')
+    tr.children[3].className = ok ? 'ok' : 'bad'
+  }
+}
+async function timed(url, opts = {}) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), LIMIT)
+  const t0 = performance.now()
+  try {
+    const r = await fetch(url, { cache: 'no-store', ...opts, signal: ctrl.signal })
+    const buf = await r.arrayBuffer()
+    return { ok: true, status: r.status, size: buf.byteLength, ms: performance.now() - t0, text: new TextDecoder().decode(buf) }
+  } catch (e) {
+    return { ok: false, ms: performance.now() - t0, error: ctrl.signal.aborted ? 'не дождались за 60 с' : String(e.message || e) }
+  } finally { clearTimeout(timer) }
+}
+const verdict = (r, slowMs) => r.ok ? (r.ms < slowMs ? [true, 'нормально'] : [false, 'очень медленно']) : [false, r.error]
+async function run() {
+  rows.innerHTML = ''
+  const info = []
+  // 1. сайт: маленький файл
+  let done = row('Сайт: страница (маленький ответ)')
+  const page = await timed('/index.html?d=' + Date.now())
+  done(page.size, page.ms, ...verdict(page, 3000))
+  // 2. сайт: основной скрипт приложения
+  const js = (page.text || '').match(/\/assets\/index-[\w-]+\.js/)
+  done = row('Сайт: скрипт приложения (большой ответ)')
+  let bundle = { text: '' }
+  if (js) { bundle = await timed(js[0] + '?d=' + Date.now()); done(bundle.size, bundle.ms, ...verdict(bundle, 8000)) } else done(null, null, false, 'скрипт не найден')
+  // адрес и публичный ключ сервера данных берём из самого приложения
+  const url = (bundle.text.match(/https:\/\/[a-z0-9]+\.supabase\.co/) || [])[0]
+  const key = (bundle.text.match(/sb_publishable_[A-Za-z0-9_-]+|eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/) || [])[0]
+  info.push('сервер данных: ' + (url || 'не найден'))
+  if (url && key) {
+    done = row('Сервер данных: маленький ответ')
+    const small = await timed(url + '/auth/v1/health', { headers: { apikey: key } })
+    done(small.size, small.ms, ...verdict(small, 3000))
+    done = row('Сервер данных: большой ответ')
+    const big = await timed(url + '/rest/v1/', { headers: { apikey: key, Authorization: 'Bearer ' + key } })
+    done(big.size, big.ms, ...verdict(big, 8000))
+  }
+  info.push('время проверки: ' + new Date().toLocaleString('ru-RU'))
+  info.push('браузер: ' + navigator.userAgent)
+  document.getElementById('info').textContent = info.join('\n')
+}
+document.getElementById('again').onclick = run
+run()
+</script>
+</body>
+</html>

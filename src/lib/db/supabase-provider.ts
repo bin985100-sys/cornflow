@@ -167,42 +167,56 @@ export class SupabaseProvider implements DataProvider {
     return (data as User) ?? null
   }
 
-  /** Создаёт стартовое пространство, если у пользователя ещё нет ни одного. */
+  /** Текущий профиль: держим в памяти, чтобы не ходить за ним перед каждым запросом */
+  private me: User | null = null
+  private meInflight: Promise<User | null> | null = null
+  private starterChecked = new Set<string>()
+
+  /**
+   * Стартовое пространство. Решает база (ensure_starter_space): под блокировкой
+   * на пользователя, поэтому параллельные вызовы из разных частей интерфейса
+   * больше не плодят одинаковые «Мой курс».
+   */
   private async ensureStarterSpace(user: User): Promise<void> {
-    const { data: existing } = await supabase()
-      .from('space_members')
-      .select('space_id')
-      .eq('user_id', user.id)
-      .limit(1)
-    if (existing && existing.length) return
+    if (this.starterChecked.has(user.id)) return
+    this.starterChecked.add(user.id)
+    const { error } = await supabase().rpc('ensure_starter_space')
+    if (error) this.starterChecked.delete(user.id)
+  }
 
-    const { data: space } = await supabase()
-      .from('spaces')
-      .insert({
-        name: user.role === 'teacher' ? 'Мой курс' : 'Моё пространство',
-        description:
-          user.role === 'teacher'
-            ? 'Первое пространство — переименуйте его под свой предмет'
-            : 'Личные материалы и конспекты',
-        owner_id: user.id,
-        color: user.role === 'teacher' ? 'blue' : 'purple',
-        invite_code: inviteCode(),
-      })
-      .select()
-      .single()
-
-    if (space) {
-      await supabase()
-        .from('space_members')
-        .insert({ space_id: (space as Space).id, user_id: user.id, permission: 'edit' })
-    }
+  /** Сессия в браузере есть, но на сервере её уже нет (удалён аккаунт, выход на другом устройстве) */
+  private isDeadSession(error: { status?: number; code?: string; message?: string } | null): boolean {
+    if (!error) return false
+    const code = String(error.code ?? '')
+    return error.status === 401 || error.status === 403 || code === 'session_not_found' || code === 'bad_jwt' || code === 'user_not_found'
   }
 
   async getCurrentUser(): Promise<User | null> {
-    const { data } = await supabase().auth.getUser()
-    if (!data.user) return null
+    // одновременные вызовы ждут один и тот же запрос, а не шлют по своему
+    if (!this.meInflight) {
+      this.meInflight = this.loadCurrentUser().finally(() => {
+        this.meInflight = null
+      })
+    }
+    return this.meInflight
+  }
+
+  private async loadCurrentUser(): Promise<User | null> {
+    const { data, error } = await supabase().auth.getUser()
+    if (this.isDeadSession(error)) {
+      // протухший токен в localStorage: тихо выходим, иначе приложение висит на нём
+      await supabase().auth.signOut({ scope: 'local' }).catch(() => undefined)
+      this.me = null
+      return null
+    }
+    if (error && !data.user) throw new Error(error.message)
+    if (!data.user) {
+      this.me = null
+      return null
+    }
     const p = await this.profile(data.user.id)
     if (p) {
+      this.me = p
       localStorage.removeItem(PENDING_ROLE_KEY)
       localStorage.removeItem(GOOGLE_MODE_KEY)
       // Аккаунт мог остаться без единого пространства (например, профиль
@@ -242,6 +256,7 @@ export class SupabaseProvider implements DataProvider {
     )
     localStorage.removeItem(PENDING_ROLE_KEY)
     const user = created as unknown as User
+    this.me = user
     // Вход через Google: профиля ещё не было, значит это первая сессия —
     // заводим стартовое пространство, как при обычной регистрации.
     await this.ensureStarterSpace(user).catch(() => undefined)
@@ -278,6 +293,7 @@ export class SupabaseProvider implements DataProvider {
     }
 
     // Стартовое пространство пользователя
+    this.me = user
     await this.ensureStarterSpace(user).catch(() => undefined)
 
     return user
@@ -324,6 +340,7 @@ export class SupabaseProvider implements DataProvider {
   }
 
   async signOut(): Promise<void> {
+    this.me = null
     await supabase().auth.signOut()
   }
 
@@ -333,9 +350,11 @@ export class SupabaseProvider implements DataProvider {
    */
   async setRole(role: User['role']): Promise<User> {
     const me = await this.requireUser()
-    return unwrap(
+    const u = unwrap(
       await supabase().from('users').update({ role }).eq('id', me.id).select().single(),
     ) as User
+    this.me = u
+    return u
   }
 
   /** Загрузка фото профиля: файл кладётся в публичный бакет avatars/<user_id>/… */
@@ -359,19 +378,42 @@ export class SupabaseProvider implements DataProvider {
 
   async updateProfile(patch: Partial<Pick<User, 'name' | 'avatar'>>): Promise<User> {
     const me = await this.requireUser()
-    return unwrap(
+    const u = unwrap(
       await supabase().from('users').update(patch).eq('id', me.id).select().single(),
     ) as User
+    this.me = u
+    return u
   }
 
   onAuthChange(cb: (user: User | null) => void): () => void {
-    const { data } = supabase().auth.onAuthStateChange(async () => {
-      cb(await this.getCurrentUser().catch(() => null))
+    // Внутри колбэка supabase-js держит блокировку сессии: новый запрос к auth
+    // прямо отсюда может зависнуть навсегда. Поэтому отпускаем колбэк и
+    // перечитываем профиль уже после него.
+    const { data } = supabase().auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        this.me = null
+        setTimeout(() => cb(null), 0)
+        return
+      }
+      if (event === 'TOKEN_REFRESHED' && this.me) return
+      this.me = null
+      setTimeout(() => {
+        this.getCurrentUser().then(cb, () => cb(null))
+      }, 0)
     })
     return () => data.subscription.unsubscribe()
   }
 
+  /**
+   * Кто сейчас вошёл. Раньше перед каждым запросом здесь был поход на сервер
+   * за пользователем и профилем — три лишних запроса на каждое действие.
+   * Теперь сверяем локальную сессию с профилем в памяти.
+   */
   private async requireUser(): Promise<User> {
+    if (this.me) {
+      const { data } = await supabase().auth.getSession()
+      if (data.session?.user.id === this.me.id) return this.me
+    }
     const u = await this.getCurrentUser()
     if (!u) throw new Error('Нужно войти в аккаунт')
     return u
@@ -421,23 +463,31 @@ export class SupabaseProvider implements DataProvider {
 
   async createSpace(input: CreateSpaceInput): Promise<Space> {
     const me = await this.requireUser()
-    const space = unwrap(
-      await supabase()
-        .from('spaces')
-        .insert({
-          name: input.name.trim(),
-          description: input.description ?? null,
-          owner_id: me.id,
-          color: input.color ?? colorFromString(input.name),
-          invite_code: inviteCode(),
-        })
-        .select()
-        .single(),
-    ) as Space
+    // id задаём сами: если запрос повторится из-за сети, второго пространства
+    // не будет — база ответит конфликтом, и мы вернём уже созданное
+    const id = crypto.randomUUID()
+    const res = await supabase()
+      .from('spaces')
+      .insert({
+        id,
+        name: input.name.trim(),
+        description: input.description ?? null,
+        owner_id: me.id,
+        color: input.color ?? colorFromString(input.name),
+        invite_code: inviteCode(),
+      })
+      .select()
+      .single()
+    let space = res.data as Space | null
+    if (res.error) {
+      if (res.error.code !== '23505') throw new Error(humanError(res.error))
+      space = unwrap(await supabase().from('spaces').select('*').eq('id', id).single()) as Space
+    }
+    // участником владельца делает триггер в базе; это страховка для старой схемы
     await supabase()
       .from('space_members')
-      .insert({ space_id: space.id, user_id: me.id, permission: 'edit' })
-    return space
+      .upsert({ space_id: space!.id, user_id: me.id, permission: 'edit' }, { onConflict: 'space_id,user_id', ignoreDuplicates: true })
+    return space!
   }
 
   async updateSpace(id: string, patch: Partial<Space>): Promise<Space> {
