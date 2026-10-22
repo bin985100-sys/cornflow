@@ -70,7 +70,8 @@ async function run() {
   let bundle = { text: '' }
   if (js) { bundle = await timed(js[0] + '?d=' + Date.now()); done(bundle.size, bundle.ms, ...verdict(bundle, 8000)) } else done(null, null, false, 'скрипт не найден')
   // адрес и публичный ключ сервера данных берём из самого приложения
-  const url = (bundle.text.match(/https:\/\/[a-z0-9]+\.supabase\.co/) || [])[0]
+  const url = (bundle.text.match(/https:\/\/[a-z0-9]+\.supabase\.co/) ||
+               bundle.text.match(/https:\/\/api\.[a-z0-9.-]+(?=["'`\/])/) || [])[0]
   const key = (bundle.text.match(/sb_publishable_[A-Za-z0-9_-]+|eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/) || [])[0]
   info.push('сервер данных: ' + (url || 'не найден'))
   if (url && key) {

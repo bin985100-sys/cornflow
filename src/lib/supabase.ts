@@ -1,6 +1,14 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
+/**
+ * Адрес сервера данных. VITE_SUPABASE_PROXY_URL — свой прокси (api.cornflow.me)
+ * для сетей, где *.supabase.co недоступен; задаётся в .env.production в репозитории
+ * (адрес не секретный). Если его нет — ходим к проекту напрямую.
+ */
+export const SUPABASE_API_URL =
+  ((import.meta.env.VITE_SUPABASE_PROXY_URL as string | undefined) ||
+    (import.meta.env.VITE_SUPABASE_URL as string | undefined))?.replace(/\/+$/, '') || undefined
+const url = SUPABASE_API_URL
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 const forceMock = String(import.meta.env.VITE_FORCE_MOCK ?? '').toLowerCase() === 'true'
 
@@ -10,6 +18,11 @@ export const BUCKET = (import.meta.env.VITE_SUPABASE_BUCKET as string | undefine
 export const hasSupabase = Boolean(url && anonKey) && !forceMock
 
 let client: SupabaseClient | null = null
+
+/** Ключ сессии в localStorage — тот же, что был при прямом адресе проекта */
+const PROJECT_REF =
+  (import.meta.env.VITE_SUPABASE_PROJECT_REF as string | undefined) || 'wlfwwclmkecutiznnwtt'
+const STORAGE_KEY = `sb-${PROJECT_REF}-auth-token`
 
 /**
  * Запросы с ограничением по времени. На медленной или «прореженной» сети
@@ -45,7 +58,14 @@ export function supabase(): SupabaseClient {
   if (!client) {
     if (!url || !anonKey) throw new Error('Supabase не сконфигурирован — приложение работает в mock-режиме')
     client = createClient(url, anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        // Имя ключа сессии supabase-js берёт из адреса сервера. Фиксируем его,
+        // чтобы при переходе на прокси (api.cornflow.me) никого не разлогинило.
+        storageKey: STORAGE_KEY,
+      },
       global: { fetch: fetchWithTimeout },
     })
   }

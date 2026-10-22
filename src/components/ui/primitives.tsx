@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { CardColor, Tag as TagModel, TagColor } from '@/lib/types'
 import { cardPalette, cx, initials, tagPalette } from '@/lib/utils'
+import { assetUrl } from '@/lib/asset-url'
 import { iconByName } from '@/lib/icons'
 
 /* --------------------------------- Аватар -------------------------------- */
@@ -27,10 +28,11 @@ export function Avatar({
   const [broken, setBroken] = useState(false)
   useEffect(() => setBroken(false), [src])
 
-  if (src && !broken) {
+  const url = assetUrl(src)
+  if (url && !broken) {
     return (
       <img
-        src={src}
+        src={url}
         alt={name}
         width={size}
         height={size}
