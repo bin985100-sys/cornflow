@@ -28,7 +28,7 @@ if [ -n "$MYIP" ] && [ "$MYIP" != "$DNSIP" ]; then
 fi
 
 echo "==> Проверка доступа к Supabase с сервера"
-curl -fsS -o /dev/null -w "    https://$UPSTREAM -> HTTP %{http_code}\n" "https://$UPSTREAM/auth/v1/health" || {
+curl -sS -o /dev/null -w "    https://$UPSTREAM -> HTTP %{http_code}\n" "https://$UPSTREAM/auth/v1/health" || {
   echo "!!  С этого сервера Supabase не открывается — нужен другой хостинг/регион."; exit 1; }
 
 echo "==> Сертификат Let's Encrypt"
@@ -99,9 +99,11 @@ server {
         proxy_ssl_name __UPSTREAM__;
         proxy_ssl_protocols TLSv1.2 TLSv1.3;
 
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Supabase берёт IP клиента из X-Forwarded-For (лимиты входа считаются
+        # по нему). Перезаписываем, а не дописываем, чтобы IP нельзя было подделать.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-Host $host;
 
         # Realtime (/realtime/v1/websocket) — постоянное соединение
         proxy_set_header Upgrade $http_upgrade;
