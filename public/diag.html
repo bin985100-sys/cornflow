@@ -77,8 +77,8 @@ async function run() {
     done = row('Сервер данных: маленький ответ')
     const small = await timed(url + '/auth/v1/health', { headers: { apikey: key } })
     done(small.size, small.ms, ...verdict(small, 3000))
-    done = row('Сервер данных: большой ответ')
-    const big = await timed(url + '/rest/v1/', { headers: { apikey: key, Authorization: 'Bearer ' + key } })
+    done = row('Сервер данных: большой ответ (200 КБ)')
+    const big = await timed(url + '/rest/v1/rpc/diag_payload?kb=200', { headers: { apikey: key, Authorization: 'Bearer ' + key } })
     done(big.size, big.ms, ...verdict(big, 8000))
   }
   info.push('время проверки: ' + new Date().toLocaleString('ru-RU'))
